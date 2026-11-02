@@ -23,10 +23,11 @@ import shutil
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
 
-from damage_control import audit
+from damage_control import audit, scriptfile
 from damage_control.profile import GENERIC
 
 
@@ -590,13 +591,23 @@ def _casefolds_paths(path: str) -> bool:
     return sys.platform in ("darwin", "win32") or bool(_DRVFS_RE.match(path))
 
 
+@functools.lru_cache(maxsize=4096)
+def _expanduser_in(path: str, home: str) -> str:
+    return os.path.expanduser(path)
+
+
+def _expanduser(path: str) -> str:
+    """``os.path.expanduser``, remembered per home directory: every command is matched against the same few hundred patterns."""
+    return _expanduser_in(path, os.environ.get("HOME", "")) if path.startswith("~") else path
+
+
 def match_path(file_path: str, pattern: str) -> bool:
     """Match a single absolute file path against a pattern (glob or prefix).
 
     On a case-insensitive filesystem both sides are casefolded, so a case
     variant that reaches the same file matches the same pattern (#1217).
     """
-    expanded_pattern = os.path.expanduser(pattern)
+    expanded_pattern = _expanduser(pattern)
     normalized = os.path.normpath(file_path)
     expanded_normalized = os.path.expanduser(normalized)
     if is_glob_pattern(pattern):
@@ -855,7 +866,7 @@ def _path_context_regex(path: str) -> str:
         # ``*.agentwire.yml`` never matched an absolute target
         # (``> /repo/.agentwire.yml`` sailed past every write pattern) (#678).
         return r'["\']?(?:[^\s"\';|&<>]*/)?' + glob_to_regex(path)
-    expanded = os.path.expanduser(path)
+    expanded = _expanduser(path)
     if expanded == path:
         if path.startswith("/"):
             return re.escape(path)
@@ -879,7 +890,7 @@ def _path_literals(path: str) -> Tuple[str, ...]:
             return ()
         literal = max(re.split(r'[*?]', path), key=len)
         return (literal.casefold(),) if literal else ()
-    expanded = os.path.expanduser(path)
+    expanded = _expanduser(path)
     return tuple(dict.fromkeys(
         p.rstrip('/').casefold() for p in (expanded, path) if p.rstrip('/')
     ))
@@ -3107,13 +3118,18 @@ def _protected_path_patterns() -> List[str]:
     matchers catch e.g. ``/Users/me/.claude/settings.json`` and
     ``~/.claude/settings.json`` alike.
     """
+    return list(_protected_spellings(tuple(PROTECTED_CONTROL_PLANE_PATHS), os.environ.get("HOME", "")))
+
+
+@functools.lru_cache(maxsize=8)
+def _protected_spellings(paths: Tuple[str, ...], home: str) -> Tuple[str, ...]:
     out: List[str] = []
-    for p in PROTECTED_CONTROL_PLANE_PATHS:
+    for p in paths:
         out.append(p)
         expanded = os.path.expanduser(p)
         if expanded != p:
             out.append(expanded)
-    return out
+    return tuple(out)
 
 
 def _matched_protected_pattern(file_path: str) -> Optional[str]:
@@ -5983,13 +5999,24 @@ def _cwd_realpath_variants(command: str) -> List[str]:
 
 
 def _guarded_path_test(config: Dict[str, Any]) -> Callable[[str], bool]:
-    """Whether an absolute path is guarded by ANY class: control plane, zero-access, read-only, no-delete."""
-    patterns = [
+    """Whether an absolute path is guarded by ANY class: control plane, zero-access, read-only, no-delete.
+
+    One test per distinct set of lists (and home, and control plane), remembering its answers: a command
+    asks about each word it holds, and a script asks about the same few hundred words chunk after chunk.
+    """
+    patterns = tuple(
         p
         for key in ("zeroAccessPaths", "readOnlyPaths", "noDeletePaths")
         for p in (config.get(key) or [])
         if isinstance(p, str)
-    ]
+    )
+    return _guarded_test_for(patterns, os.environ.get("HOME", ""), tuple(_protected_path_patterns()))
+
+
+@functools.lru_cache(maxsize=8)
+def _guarded_test_for(
+    patterns: Tuple[str, ...], home: str, protected: Tuple[str, ...]
+) -> Callable[[str], bool]:
     # A bare directory entry (`.git/`, `node_modules/`) is a path COMPONENT, not an
     # absolute prefix: a file inside it is guarded wherever the directory sits, so
     # `rm hooks/x` run from `<repo>/.git` names a guarded path without saying `.git`.
@@ -5998,7 +6025,15 @@ def _guarded_path_test(config: Dict[str, Any]) -> Callable[[str], bool]:
         if p.endswith("/") and not p.startswith(("/", "~")) and not is_glob_pattern(p)
     ]
 
+    answers: Dict[str, bool] = {}
+
     def guarded(path: str) -> bool:
+        known = answers.get(path)
+        if known is None:
+            known = answers[path] = _guarded(path)
+        return known
+
+    def _guarded(path: str) -> bool:
         if is_protected_control_plane(path) or any(match_path(path, p) for p in patterns):
             return True
         fold = str.lower if _casefolds_paths(path) else str
@@ -8697,6 +8732,35 @@ def _masked_subcommand_words(command: str, keep=None) -> List[List[str]]:
     return [words for words, _payload in _masked_subcommand_entries(command, keep)]
 
 
+@functools.lru_cache(maxsize=16)
+def _resolved_token_stage(command: str) -> Tuple[Tuple[Tuple[str, bool, bool], ...], ...]:
+    """Each subcommand of ``command`` as ``(resolved text, fully_quoted, expands)`` tokens.
+
+    Everything :func:`_masked_subcommand_entries` does BEFORE the keep-predicate applies, and so
+    the same for every guarded path the ladders walk: a command is tokenized once, not once per path.
+    """
+    command = _strip_heredoc_bodies(command)
+
+    assigns: Dict[str, str] = {}
+    for m in _ASSIGN_RE.finditer(command):
+        assigns[m.group(1)] = m.group(2).strip("'\"")
+
+    def _resolve(tok: str) -> str:
+        for name, val in assigns.items():
+            tok = tok.replace("${%s}" % name, val).replace("$" + name, val)
+        return tok
+
+    stage = []
+    for toks in _scan_masked_tokens(command):
+        toks = [
+            (text.replace(_DATA_PAREN, ")"), fq, ex)
+            for text, fq, ex in strip_command_openers(toks)
+        ]
+        if toks:
+            stage.append(tuple((_resolve(text), fq, ex) for text, fq, ex in toks))
+    return tuple(stage)
+
+
 def _masked_subcommand_entries(
     command: str, keep=None, _depth: int = 0
 ) -> List[Tuple[List[str], bool]]:
@@ -8711,34 +8775,16 @@ def _masked_subcommand_entries(
     tokens hold shell positions — anchored matching must scan those anywhere,
     never at command position (#922).
     """
-    command = _strip_heredoc_bodies(command)
-
-    assigns: Dict[str, str] = {}
-    for m in _ASSIGN_RE.finditer(command):
-        assigns[m.group(1)] = m.group(2).strip("'\"")
-
-    def _resolve(tok: str) -> str:
-        for name, val in assigns.items():
-            tok = tok.replace("${%s}" % name, val).replace("$" + name, val)
-        return tok
-
     if _depth > _RESCAN_MAX_DEPTH:
         return []
     results: List[Tuple[List[str], bool]] = []
-    for toks in _scan_masked_tokens(command):
-        toks = [
-            (text.replace(_DATA_PAREN, ")"), fq, ex)
-            for text, fq, ex in strip_command_openers(toks)
-        ]
-        if not toks:
-            continue
+    for toks in _resolved_token_stage(command):
         words: List[str] = []
         # Resolved text of EVERY token, content included — the wrapper-payload
         # rescan below (#924/#921) needs the text the masked entry blanks.
         raws: List[str] = []
         prev = ""
-        for text, fully_quoted, expands in toks:
-            resolved = _resolve(text)
+        for resolved, fully_quoted, expands in toks:
             raws.append(resolved)
             # A quoted token holding a COMMAND SUBSTITUTION is not content, no
             # matter how much prose surrounds it: ``git commit -m "$(rm -rf
@@ -10089,7 +10135,8 @@ _DECISION_RANK = {"allow": 0, "ask": 1, "block": 2}
 
 
 def _decide_command(
-    command: str, config: Dict[str, Any], cwd: Optional[str] = None, _depth: int = 0
+    command: str, config: Dict[str, Any], cwd: Optional[str] = None, _depth: int = 0,
+    _scan: Optional["_ScriptScan"] = None,
 ) -> Dict[str, Any]:
     """:func:`_decide_rules` on ``command``, then on every command hidden in it (see HIDDEN COMMANDS).
 
@@ -10100,14 +10147,20 @@ def _decide_command(
     hidden command is part of the command the user already waved through — and
     an inner escape/disabled verdict is just an allow, never a way to lower the
     outer one.
+
+    A file this command runs is read and judged too (see SCRIPT INDIRECTION). The text of a
+    script is judged as ``scripted``: a ``# allow:`` line in it is a comment, not the user's
+    escape hatch, and a computed verb or substitution in it (every real script has them) is not
+    asked about — only what the rule ladder positively recognizes counts.
     """
-    verdict = _decide_rules(command, config, cwd)
+    scripted = _scan is not None and _scan.depth > 0
+    verdict = _decide_rules(command, config, cwd, scripted)
     resolved = []
     if not verdict.get("protected"):
         # The control plane outranks the escape hatch and the kill switch, so a
         # relative spelling of it is judged before either can end the walk.
         for variant in _cwd_resolved_variants(command, cwd, config):
-            inner = _decide_rules(variant, config, cwd)
+            inner = _decide_rules(variant, config, cwd, scripted)
             if inner.get("protected"):
                 return dict(inner, command=command)
             resolved.append(inner)
@@ -10119,9 +10172,11 @@ def _decide_command(
         or verdict["decision"] == "block"
     ):
         return verdict
+    _scan = _scan or _ScriptScan()
     for inner in itertools.chain(
         resolved,
-        (_decide_command(hidden, config, cwd, _depth + 1) for hidden in _hidden_commands(command, rules=True)),
+        (_decide_command(hidden, config, cwd, _depth + 1, _scan) for hidden in _hidden_commands(command, rules=True)),
+        _script_verdicts(command, config, cwd, _scan),
     ):
         if _DECISION_RANK[inner["decision"]] > _DECISION_RANK[verdict["decision"]] and not (
             inner.get("escape") or inner.get("disabled")
@@ -10129,10 +10184,10 @@ def _decide_command(
             verdict = dict(inner, command=command)
             if verdict["decision"] == "block":
                 return verdict
-    return _unresolvable_verdict(command, verdict)
+    return _unresolvable_verdict(command, verdict, scripted)
 
 
-def _unresolvable_verdict(command: str, verdict: Dict[str, Any]) -> Dict[str, Any]:
+def _unresolvable_verdict(command: str, verdict: Dict[str, Any], scripted: bool = False) -> Dict[str, Any]:
     """Raise ``verdict`` to the strictest of: a computed verb nothing can read, a program piped from an unreadable producer."""
     fed = fed_program_verdict(command)
     if fed and fed[0] == "block":
@@ -10143,7 +10198,7 @@ def _unresolvable_verdict(command: str, verdict: Dict[str, Any]) -> Dict[str, An
             "command": command,
             "id": "core.fetched-program-pipe",
         }
-    if verdict["decision"] == "block" or verdict.get("unverifiable"):
+    if verdict["decision"] == "block" or verdict.get("unverifiable") or scripted:
         return verdict
     if fed:
         why, unverifiable = fed[1], True
@@ -10172,7 +10227,7 @@ def _unresolvable_verdict(command: str, verdict: Dict[str, Any]) -> Dict[str, An
 
 
 def _decide_rules(
-    command: str, config: Dict[str, Any], cwd: Optional[str] = None
+    command: str, config: Dict[str, Any], cwd: Optional[str] = None, scripted: bool = False
 ) -> Dict[str, Any]:
     """Decide whether a bash command should be allowed/blocked/asked.
 
@@ -10242,7 +10297,7 @@ def _decide_rules(
             "unverifiable": True,
         }
 
-    escape_reason = detect_escape_hatch(command)
+    escape_reason = None if scripted else detect_escape_hatch(command)
     if escape_reason:
         return {
             "decision": "allow",
@@ -10273,6 +10328,8 @@ def _decide_rules(
     # behind substitution/eval/base64-pipe/unbalanced-quotes — we fail closed to
     # ``ask`` at the end (the unattended resolver turns that into a block).
     subcommands, ambiguous = normalize_subcommands(command)
+    if scripted:
+        ambiguous = None  # a script's own substitutions and computed verbs are not asked about
     # Ambiguity is judged on the real command; RULE matching reads it with
     # git/gh message and body values neutralized (see mask_prose_operands).
     rule_command = mask_prose_operands(command)
@@ -10743,6 +10800,713 @@ def check_mcp_tool(tool_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
         "mutates": None,
         "matched": False,
     }
+
+
+# ============================================================================
+# SCRIPT INDIRECTION
+# ============================================================================
+#
+# A command string names a file; the file holds the commands. Judging only the string lets
+# ``bash x.sh`` through whatever ``x.sh`` says. So a command that RUNS a file is judged on the
+# file's text too, by the same ladder a typed command gets:
+#
+#   * explicit shells (``sh|bash|zsh|dash|ksh x.sh``), ``source x`` / ``. x``, a path run directly
+#     (``./x``, ``/abs/x``, ``dir/x``), and ``python|node|perl|ruby x`` — through the wrapper
+#     chain (``sudo``, ``env``, ``nohup``, ``time`` ...), against the payload cwd and each literal
+#     ``cd`` before it;
+#   * one command that WRITES a file (``> f``, ``>> f``, ``tee f``, a heredoc, ``echo``/``printf``)
+#     and then runs it is judged on the body it writes;
+#   * the Write / Edit / NotebookEdit tools creating script-looking content (``check_script_content``).
+#
+# A shell script is judged whole, as one command: the ladder already follows ``cd``, ``VAR=x``
+# and heredocs across lines. Other interpreters are reduced to the commands their process-spawning
+# calls carry (``_foreign_commands``) — string literals elsewhere are prose and are not judged.
+# Only what the ladder positively recognizes counts inside a script (``scripted``): no
+# ``# allow:`` escape, no ask for a substitution or computed verb. A script that cannot be read
+# when it must be (unreadable, too large, nested too deep, or produced by this very command from
+# a source nothing can read) is an unverifiable ask.
+#
+# A seatbelt: it reads the file when the hook runs. Not covered — fetched scripts, ``make`` /
+# ``npm run`` / ``just`` recipes, binaries, interpreters reading stdin, obfuscation, and a file that
+# changes between this read and the run (docs/threat-model.md, "Script indirection").
+
+MAX_SCRIPT_DEPTH = 3  # a script that runs a script that runs a script
+MAX_SCRIPT_FILES = 16  # files read per top-level check
+MAX_SCRIPT_TOTAL_BYTES = 1024 * 1024  # text read per top-level check
+MAX_SCRIPT_SCAN_SECONDS = 4  # judging time per top-level check, inside the 10s scan deadline
+_SCRIPT_CHUNK_CHARS = 1500  # a shell script is judged in pieces about this long
+_SCRIPT_CONTEXT_LINES = 12  # assignment / cd lines carried into each piece
+_SCRIPT_ASSIGN_RE = re.compile(r"^\s*(?:export\s+|readonly\s+|local\s+|declare\s+)?([A-Za-z_]\w*)=(?!.*(?:\$\(|`))")
+_SCRIPT_CD_RE = re.compile(r"^\s*(?:cd|pushd|popd)\b")
+_MAX_FOREIGN_CANDIDATES = 64
+_PROGRAM_CONTEXT_LINES = 3  # lines kept around each line of a non-shell program that names a protected path
+_PROGRAM_MAX_LINES = 200
+
+_SCRIPT_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash"})
+_SCRIPT_RUN_HINT = re.compile(
+    r"/|\b(?:source|ash|sh|bash|zsh|dash|ksh|python[\d.]*|pypy[\d.]*|node(?:js)?|bun|deno|perl[\d.]*|ruby[\d.]*)\b"
+    r"|(?:^|[\s;&|(])\.\s"
+)
+_SCRIPT_UNSAFE_PATH = re.compile(r"[$`*?\[{\x00]")
+_REDIRECT_OUT_RE = re.compile(r"^(?:\d+|&)?(>>?\|?)(.*)$")
+_HEREDOC_OPENER_RE = re.compile(r"^\d*<<(?!<)")
+_INTERPRETER_OPTIONS = {  # language -> (flags that make the program text inline, flags taking a separate value)
+    "python": (frozenset({"-c", "-m"}), frozenset({"-W", "-X", "-Q"})),
+    "node": (frozenset({"-e", "--eval", "-p", "--print"}),
+             frozenset({"-r", "--require", "--import", "--loader", "--experimental-loader", "--conditions", "-C"})),
+    "perl": (frozenset({"-e", "-E"}), frozenset({"-I", "-M", "-m"})),
+    "ruby": (frozenset({"-e"}), frozenset({"-r", "-I", "-C", "-E"})),
+}
+_ESCAPE_RE = re.compile(r"\\(n|t|r|\\|'|\"|x[0-9a-fA-F]{2})")
+_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", "'": "'", '"': '"'}
+_PRINTF_SPEC_RE = re.compile(r"%(?:%|[-+ #0-9.]*[sbdiouxXcq])")
+
+
+class _ScriptScan:
+    """What one top-level check has read: nesting depth, file, byte and time budgets, a verdict per file."""
+
+    __slots__ = ("depth", "files", "nbytes", "done", "stack", "deadline")
+
+    def __init__(self) -> None:
+        self.deadline = time.perf_counter() + MAX_SCRIPT_SCAN_SECONDS
+        self.depth = 0
+        self.files = 0
+        self.nbytes = 0
+        self.done: Dict[str, Optional[Dict[str, Any]]] = {}
+        self.stack: List[str] = []
+
+
+class _ScriptRef(NamedTuple):
+    """One place a command runs a file."""
+
+    path: str  # as written
+    candidates: Tuple[str, ...]  # absolute spellings: the tracked cwd's, then the payload cwd's
+    lang: Optional[str]  # the interpreter's language; None means the file's own shebang decides
+    prior: bool  # an earlier word of the same command names this file: it may be made on the way
+    written: Tuple[Tuple[str, Optional[str]], ...]  # (body, language hint) this command writes to it first
+
+
+def _script_refusal(reason: str, rule_id: str) -> Dict[str, Any]:
+    out = _budget_refusal("", reason, rule_id)
+    out["scriptscan"] = True
+    return out
+
+
+def _unescape(text: str) -> str:
+    return _ESCAPE_RE.sub(
+        lambda m: _ESCAPES.get(m.group(1)) or chr(int(m.group(1)[1:], 16)), text
+    )
+
+
+def _printf_text(fmt: str, args: List[str]) -> str:
+    """What ``printf FORMAT ARGS`` prints, for the specs a script body uses."""
+    fmt = _unescape(fmt)
+    if not _PRINTF_SPEC_RE.search(fmt):
+        return fmt
+    remaining = list(args) or [""]
+    out: List[str] = []
+    while remaining and len(out) < 64:
+        def fill(m: "re.Match[str]") -> str:
+            return "%" if m.group(0) == "%%" else (remaining.pop(0) if remaining else "")
+        out.append(_PRINTF_SPEC_RE.sub(fill, fmt))
+    return "".join(out)
+
+
+def _written_text(base: str, args: List[str], heredoc: Optional["_Heredoc"], piped: Optional[str]) -> Optional[str]:
+    """The text a simple command sends to its stdout (or, for ``tee``, to its files); None when it is not literal."""
+    if base == "echo":
+        flags = ""
+        while args and re.fullmatch(r"-[neE]+", args[0]):
+            flags += args.pop(0)[1:]
+        text = " ".join(args)
+        text = _unescape(text) if "e" in flags else text
+        return text if "n" in flags else text + "\n"
+    if base == "printf" and args:
+        return _printf_text(args[0], args[1:])
+    if base == "cat" and heredoc is not None and not [a for a in args if not a.startswith("-")]:
+        return heredoc.body
+    if base == "tee":
+        return heredoc.body if heredoc is not None else piped
+    return None
+
+
+def _shell_script_operand(args: List[str]) -> Optional[str]:
+    """The script file a shell is run on (``bash -ex ./x.sh a b``), or None for ``-c`` / ``-s`` / stdin."""
+    i = 0
+    while i < len(args):
+        w = args[i]
+        if w == "--":
+            return args[i + 1] if i + 1 < len(args) else None
+        if w in ("-c", "--command") or w.startswith("--command="):
+            return None
+        if w in ("--rcfile", "--init-file"):
+            i += 2
+        elif w.startswith("--"):
+            i += 1
+        elif len(w) > 1 and w[0] in "-+" and w[1:].isalpha():
+            if w[0] == "-" and ("c" in w or "s" in w):
+                return None
+            i += 2 if w[-1] in "oO" else 1
+        else:
+            return None if w == "-" else w
+    return None
+
+
+def _interpreter_script_operand(lang: str, args: List[str]) -> Optional[str]:
+    """The script file ``python|node|perl|ruby`` is run on, or None when the program is inline / a module / stdin."""
+    inline, takes_value = _INTERPRETER_OPTIONS[lang]
+    i = 0
+    while i < len(args):
+        w = args[i]
+        if w == "--":
+            return args[i + 1] if i + 1 < len(args) else None
+        if w == "-":
+            return None
+        if w in inline:
+            return None
+        if w in takes_value:
+            i += 2
+        elif w.startswith("-"):
+            if not w.startswith("--") and any(f"-{ch}" in inline for ch in w[1:]):
+                return None  # ``-Bc`` / ``-ne``: a cluster that carries an inline program
+            i += 1
+        else:
+            return w
+    return None
+
+
+def _source_operand(args: List[str]) -> Optional[str]:
+    for w in args:
+        if w == "--" or w.startswith("-"):
+            continue
+        return w
+    return None
+
+
+def _exec_operand(head: str, args: List[str]) -> Optional[Tuple[str, Optional[str]]]:
+    """``(file, language)`` when this command word runs a file, else None."""
+    base = os.path.basename(head)
+    if base in _SCRIPT_SHELLS:
+        operand = _shell_script_operand(args)
+        return (operand, "shell") if operand else None
+    if head in ("source", "."):
+        operand = _source_operand(args)
+        return (operand, "shell") if operand else None
+    lang = scriptfile.language_of(base)
+    if lang and lang != "shell":
+        operand = _interpreter_script_operand(lang, args)
+        return (operand, lang) if operand else None
+    if "/" in head and not head.endswith("/"):
+        return head, None
+    return None
+
+
+def _candidate_paths(operand: str, bases: List[str]) -> Tuple[str, ...]:
+    """Absolute spellings of a file operand; empty when it is not a plain literal path."""
+    if not operand or _SCRIPT_UNSAFE_PATH.search(operand):
+        return ()
+    operand = os.path.expanduser(operand) if operand.startswith("~") else operand
+    if operand.startswith("/"):
+        return (posixpath.normpath(operand),)
+    return tuple(dict.fromkeys(posixpath.normpath(posixpath.join(b, operand)) for b in bases))
+
+
+def _script_refs(command: str, cwd: Optional[str], _depth: int = 0) -> List[_ScriptRef]:
+    """Every file ``command`` runs, in order, with what the same command writes to it first."""
+    if not _SCRIPT_RUN_HINT.search(command):
+        return []
+    payload_cwd = posixpath.normpath(cwd) if cwd and os.path.isabs(cwd) else None
+    tracked: Optional[str] = payload_cwd
+    lost = False
+    heredocs = list(_heredocs(command))
+    next_heredoc = 0
+    earlier: List[str] = []
+    writes: Dict[str, List[Tuple[str, Optional[str]]]] = {}
+    piped: Optional[str] = None
+    refs: List[_ScriptRef] = []
+    for raw in _segment_raw_words(command):
+        argv: List[str] = []
+        targets: List[str] = []
+        heredoc: Optional[_Heredoc] = None
+        j = 0
+        while j < len(raw):
+            w = raw[j]
+            if w.endswith(")") and len(w) > 1:
+                w = w[:-1]
+            if _HEREDOC_OPENER_RE.match(w):
+                if next_heredoc < len(heredocs):
+                    heredoc = heredocs[next_heredoc]
+                    next_heredoc += 1
+            elif _REDIRECT_OUT_RE.match(w):
+                m = _REDIRECT_OUT_RE.match(w)
+                target = m.group(2)
+                if not target and j + 1 < len(raw):
+                    j += 1
+                    target = raw[j]
+                if target and not target.startswith("&"):
+                    targets.append(target)
+            elif w.startswith("<"):
+                j += 1 if w == "<" else 0
+            elif w not in _GROUP_WORDS and w != ")":
+                argv.append(w)
+            j += 1
+        ci = _wrapped_command_index(argv)
+        text: Optional[str] = None
+        if ci is not None:
+            head, args = argv[ci], argv[ci + 1 :]
+            if re.search(r"\s", head):  # ``$RCON say`` with ``RCON="python3 x.py"``: the variable brought its arguments
+                try:
+                    parts = shlex.split(head)
+                except ValueError:
+                    parts = []
+                head, args = (parts[0], parts[1:] + args) if parts else ("", args)
+            if "://" in head:
+                head = ""  # a URL the wrapper walk stopped on, not a command
+            base = os.path.basename(head)
+            if head in ("cd", "pushd", "popd"):
+                target = _cd_target(argv[ci:]) if head != "popd" else None
+                tracked = _join_dir(tracked, target) if target is not None else None
+                lost = tracked is None  # ``cd $x`` / ``cd -``: a relative name no longer means anything
+            else:
+                bases = [] if lost else [b for b in dict.fromkeys((tracked, payload_cwd)) if b]
+                found = _exec_operand(head, args)
+                candidates = _candidate_paths(found[0], bases) if found else ()
+                if candidates:
+                    operand = found[0]
+                    mentioned = any(
+                        w == operand or os.path.basename(w) == os.path.basename(operand) for w in earlier
+                    )
+                    refs.append(_ScriptRef(
+                        operand, candidates, found[1], mentioned,
+                        tuple(b for c in candidates for b in writes.get(c, ())),
+                    ))
+                if base in _SCRIPT_SHELLS and _depth < _RESCAN_DEPTH:
+                    payload = _eval_shell_invocation(args, False)[0]  # ``sh -c 'sh x.sh'``
+                    if payload:
+                        refs.extend(_script_refs(payload, None if lost else tracked, _depth + 1))
+                text = _written_text(base, list(args), heredoc, piped)
+                if text is not None:
+                    tees = [a for a in args if not a.startswith("-")] if base == "tee" else []
+                    for target in targets + tees:
+                        hint = scriptfile.extension_language(target)
+                        for c in _candidate_paths(target, [] if lost else [b for b in (tracked, payload_cwd) if b][:1]):
+                            writes.setdefault(c, []).append((text, hint))
+        piped = text
+        earlier.extend(w for w in argv if not _ASSIGN_TOKEN_RE.match(w))  # ``X=/p/x.sh`` names a file, makes none
+        earlier.extend(targets)
+    return refs
+
+
+# ---- non-shell interpreters: the commands their process-spawning calls carry -----------------
+
+_F_STR_RE = re.compile(
+    r"""[rRbBuUfF]{0,2}(?:\"\"\"(.*?)\"\"\"|'''(.*?)'''|"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`)""",
+    re.S,
+)
+_F_CONST_RE = re.compile(
+    r"""^[ \t]*(?:(?:const|let|var|my|our|local)\s+)?[$@]?([A-Za-z_]\w*)\s*=\s*"""
+    r"""([rRbBuUfF]{0,2}(?:\"\"\".*?\"\"\"|'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"))\s*;?[ \t]*$""",
+    re.M | re.S,
+)
+_F_CALL_RE = re.compile(r"(?<![\w$@])((?:[A-Za-z_$][\w$]*\s*(?:\.|::)\s*)*)([A-Za-z_]\w*)\s*\(")
+_F_BARE_RE = re.compile(r"(?<![\w$@.:])(?:system|exec)[ \t]+(?=['\"%q])[^\n;]*")
+_F_BACKTICK_RE = re.compile(r"`([^`\n]+)`")
+_F_QX_RE = re.compile(r"(?:%x|qx)\s*(?:\((.*?)\)|\{(.*?)\}|\[(.*?)\]|/(.*?)/)", re.S)
+_F_KEYWORD_RE = re.compile(r"^[A-Za-z_]\w*\s*(?:=|:)(?![=:])")
+_F_SPAWN = frozenset({
+    "system", "popen", "popen2", "popen3", "popen4", "Popen", "check_call", "check_output", "getoutput",
+    "getstatusoutput", "execSync", "execFileSync", "spawnSync", "capture2", "capture2e", "capture3",
+    "execv", "execve", "execl", "execlp", "execvp", "execvpe", "spawnl", "spawnlp", "spawnv", "spawnvp",
+    "run", "call", "exec", "spawn", "execFile", "fork",
+})
+_F_FILE_TREE = frozenset({"rmtree", "rm_rf", "rm_r", "rimraf", "removedirs", "rmdirSync", "rmSync"})
+_F_FILE_ONE = frozenset({"unlink", "unlinkSync", "remove", "rmdir", "rm_f"})
+# Names that are also methods of unrelated objects (``list.remove``, ``re.compile().run``): they count
+# only on a process / file module, or bare when the file imports the module that owns them.
+_F_AMBIGUOUS = frozenset({"run", "call", "exec", "spawn", "execFile", "fork", "remove", "unlink", "rmdir"})
+_F_RECEIVERS = frozenset({
+    "subprocess", "sp", "child_process", "cp", "os", "fs", "shutil", "Kernel", "Open3", "FileUtils", "Process",
+    "promises", "fsp", "fse", "pty", "commands", "IO", "File", "Dir", "Deno",
+})
+_F_IMPORT_MARKERS = ("subprocess", "child_process", "node:fs", "require('fs')", 'require("fs")', "shutil")
+_F_COMMAND_NAMES = {"python": "python3", "node": "node", "perl": "perl", "ruby": "ruby"}
+_F_NOTEBOOK_BANG_RE = re.compile(r"^[ \t]*!\s*(\S.*)$", re.M)
+_F_NOTEBOOK_BASH_RE = re.compile(r"\A\s*%%(?:bash|sh|script\s+(?:ba)?sh)[ \t]*\n(.*)\Z", re.S)
+
+
+def _top_level_split(text: str, sep: str) -> List[str]:
+    """``text`` cut at ``sep`` wherever it stands outside quotes and brackets."""
+    parts, depth, quote, start, i = [], 0, "", 0, 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 1
+            elif ch == quote:
+                quote = ""
+        elif ch in "'\"`":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif depth == 0 and text.startswith(sep, i):
+            parts.append(text[start:i])
+            start = i + len(sep)
+            i = start - 1
+        i += 1
+    parts.append(text[start:])
+    return parts
+
+
+def _f_literal(expr: str, consts: Dict[str, str]) -> Optional[str]:
+    """The text of a string expression: literals joined by ``+`` (or perl's ``.``), a literal name, a format's template.
+
+    A part that is not a literal (``"rm -rf " + path``) stands in as ``$X``, so the command reads as the
+    shell command the program builds. None when no part is a literal at all.
+    """
+    cut = _top_level_split(expr.strip(), " % ")[0]
+    cut = _top_level_split(cut, ".format(")[0]
+    terms = [t.strip() for t in _top_level_split(cut, "+")]
+    if len(terms) == 1:
+        terms = [t.strip() for t in _top_level_split(terms[0], " . ")]
+    out: List[str] = []
+    seen_literal = False
+    for term in terms:
+        m = _F_STR_RE.fullmatch(term)
+        if m:
+            out.append(_unescape(next(g for g in m.groups() if g is not None)))
+            seen_literal = True
+        elif term.lstrip("$@") in consts:
+            out.append(consts[term.lstrip("$@")])
+            seen_literal = True
+        else:
+            out.append("$X")
+    return "".join(out) if seen_literal else None
+
+
+def _f_list(expr: str, consts: Dict[str, str]) -> Optional[List[str]]:
+    """The items of a list / array literal (``["rm", "-rf", d]``, ``%w[rm -rf /]``, ``qw(rm -rf /)``)."""
+    s = expr.strip()
+    m = re.match(r"(?:%w|qw)\s*[(\[{<](.*)[)\]}>]\Z", s, re.S)
+    if m:
+        return m.group(1).split()
+    if len(s) > 1 and s[0] in "[(" and s[-1] in "])":
+        return [_f_literal(a, consts) or "$X" for a in _split_args(s[1:-1])]
+    return None
+
+
+def _f_argv(args: List[str], consts: Dict[str, str]) -> Optional[str]:
+    """The shell command a spawning call's positional arguments make."""
+    positional: List[str] = []
+    for a in args:
+        a = a.strip()
+        if _F_KEYWORD_RE.match(a) or a.startswith("{"):
+            break
+        positional.append(a)
+    if not positional:
+        return None
+    items: List[Optional[str]] = []
+    listed = False
+    for a in positional:
+        listed_items = _f_list(a, consts)
+        if listed_items is not None:
+            items.extend(listed_items)
+            listed = True
+        else:
+            items.append(_f_literal(a, consts))
+    if not items or items[0] is None:
+        return None
+    if len(items) == 1 and not listed:
+        return items[0]
+    return " ".join(shlex.quote(i) if i is not None else "$X" for i in items)
+
+
+def _foreign_commands(text: str, lang: str) -> List[str]:
+    """Shell commands the process-spawning and file-deleting calls of a ``python|node|perl|ruby`` program carry.
+
+    Conservative on purpose: only the arguments of a known call are read — a docstring that says
+    ``rm -rf`` is prose. A name bound once to a literal is followed (``cmd = "..."; os.system(cmd)``).
+    """
+    if lang == "notebook":
+        bash = _F_NOTEBOOK_BASH_RE.match(text)
+        if bash:
+            return [bash.group(1)]
+        return _foreign_commands(text, "python") + [m.group(1) for m in _F_NOTEBOOK_BANG_RE.finditer(text)]
+    consts = {m.group(1): lit for m in _F_CONST_RE.finditer(text) for lit in [_f_literal(m.group(2), {})] if lit}
+    imports_module = any(marker in text for marker in _F_IMPORT_MARKERS)
+    found: List[str] = []
+    for m in _F_CALL_RE.finditer(text):
+        name = m.group(2)
+        if name not in _F_SPAWN and name not in _F_FILE_TREE and name not in _F_FILE_ONE:
+            continue
+        receiver = re.split(r"\s*(?:\.|::)\s*", m.group(1).strip().rstrip(".:"))[-1]
+        if name in _F_AMBIGUOUS and receiver not in _F_RECEIVERS and not (not receiver and imports_module):
+            continue
+        close = _match_close(text, m.end() - 1)
+        if close < 0:
+            continue
+        args = _split_args(text[m.end() : close])
+        if name in _F_SPAWN:
+            cmd = _f_argv(args, consts)
+            if cmd:
+                found.append(cmd)
+            continue
+        found.append(text[m.start() : close + 1])
+        target = _f_literal(args[0], consts) if args else None
+        if target and "$X" not in target:
+            tree = name in _F_FILE_TREE and (name != "rmSync" or re.search(r"recursive|force", text[m.end() : close]))
+            found.append(("rm -rf " if tree else "rm ") + shlex.quote(target))
+    if lang in ("perl", "ruby"):
+        found += [m.group(1) for m in _F_BACKTICK_RE.finditer(text)]
+        found += [next(g for g in m.groups() if g is not None) for m in _F_QX_RE.finditer(text)]
+        for m in _F_BARE_RE.finditer(text):
+            cmd = _f_argv(_split_args(m.group(0).split(None, 1)[1]), consts)
+            if cmd:
+                found.append(cmd)
+    return list(dict.fromkeys(found))[:_MAX_FOREIGN_CANDIDATES]
+
+
+def _program_protected_verdict(text: str, lang: str, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """A protected control-plane write anywhere in a ``python|node|perl|ruby`` program, as ``<interpreter> -c`` would be judged."""
+    name = _F_COMMAND_NAMES.get(lang if lang != "notebook" else "python")
+    if not name or not mentions_control_plane(text):
+        return None
+    # Only the lines that name a protected path, with a few around them: the path ladders re-walk the
+    # whole program once per protected path, so a long file is not judged whole.
+    lines = text.split("\n")
+    near = sorted({k for i, ln in enumerate(lines) if mentions_control_plane(ln)
+                   for k in range(max(0, i - _PROGRAM_CONTEXT_LINES), i + _PROGRAM_CONTEXT_LINES + 1) if k < len(lines)})
+    program = "\n".join(lines[k] for k in near[:_PROGRAM_MAX_LINES])
+    blocked, reason = check_protected_command(f"{name} -c {shlex.quote(program)}", load_allowed_paths(config))
+    if not blocked:
+        return None
+    return {"decision": "block", "reason": reason, "pattern": "protectedControlPlane",
+            "id": "core.protected-control-plane", "protected": True}
+
+
+# ---- judging --------------------------------------------------------------------------------
+
+def _script_finding(inner: Dict[str, Any], label: str, authoring: bool = False) -> Optional[Dict[str, Any]]:
+    """``inner`` (the verdict on a script's text) as a verdict on the command that runs it; None when nothing was found."""
+    if inner["decision"] == "allow" or inner.get("escape") or inner.get("disabled"):
+        return None
+    if inner.get("unverifiable") and not inner.get("scriptscan"):
+        return None
+    where = f"script content for {label}" if authoring else f"script {label}"
+    out = dict(inner)
+    out["reason"] = f"{inner['reason']} [in {where}; rule {inner.get('id')}]"
+    out["scriptscan"] = True
+    return out
+
+
+def _judge_script_text(
+    text: str, lang: str, label: str, config: Dict[str, Any], cwd: Optional[str], scan: _ScriptScan,
+    authoring: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """The finding in ``text``, a script in ``lang``, judged as the commands it holds."""
+    if lang == "shell":
+        if not authoring and _size_budget_refusal(text):
+            return _script_refusal(f"Script {label} too large to analyze safely", "core.script-too-large")
+        units = _script_units(text)
+    else:
+        protected = _program_protected_verdict(text, lang, config)
+        if protected:
+            return _script_finding(protected, label, authoring)
+        body = "\n".join(_foreign_commands(text, lang))
+        units = [body] if body.strip() else []
+    findings: List[Dict[str, Any]] = []
+    scan.depth += 1
+    try:
+        for unit in units:
+            if time.perf_counter() > scan.deadline:
+                return _script_refusal(
+                    f"Script {label} takes longer than {MAX_SCRIPT_SCAN_SECONDS:g}s to analyze", "core.script-budget"
+                )
+            found = _script_finding(_decide_command(unit, config, cwd, 0, scan), label, authoring)
+            if found:
+                findings.append(found)
+                if found["decision"] == "block":
+                    break
+    finally:
+        scan.depth -= 1
+    return _strictest(findings)
+
+
+def _script_units(text: str) -> List[str]:
+    """A shell script as chunks the ladder judges one at a time, each with the assignments and ``cd`` lines it depends on.
+
+    Judging a long script whole costs far more than the sum of its parts (the path ladders re-walk the
+    whole text once per guarded path), so it is cut at newlines where the shell is between statements: no
+    open quote, ``$(``, backslash continuation or heredoc. Each chunk is preceded by the literal
+    ``NAME=value`` assignments it expands and every ``cd`` seen so far (``_SCRIPT_CONTEXT_LINES``), so
+    ``D=/; ...; rm -rf $D`` and ``cd /opt; ...; ./run`` read the same across a cut as inside one.
+    """
+    if len(text) <= _SCRIPT_CHUNK_CHARS:
+        return [text]
+    cuts = _script_cut_points(text)
+    units: List[str] = []
+    assigned: Dict[str, str] = {}
+    dirs: List[str] = []
+    start = 0
+    for cut in sorted(set(cuts) | {len(text)}):
+        if cut - start < _SCRIPT_CHUNK_CHARS and cut != len(text):
+            continue
+        chunk = text[start:cut]
+        used = [line for name, line in assigned.items() if re.search(r"\$\{?" + re.escape(name) + r"\b", chunk)]
+        units.append("\n".join(used[-_SCRIPT_CONTEXT_LINES:] + dirs[-_SCRIPT_CONTEXT_LINES:] + [chunk]))
+        for line in chunk.split("\n"):
+            m = _SCRIPT_ASSIGN_RE.match(line)
+            if m:
+                assigned[m.group(1)] = line.strip()
+            elif _SCRIPT_CD_RE.match(line):
+                dirs.append(line.strip())
+        start = cut
+    return units
+
+
+def _script_cut_points(text: str) -> List[int]:
+    """Offsets just after each newline at which the shell is between statements (see :func:`_script_units`)."""
+    inside_heredoc = [(h.start, h.end) for h in _heredocs(text)]
+    cuts: List[int] = []
+    quote, subst, i, n, h = "", 0, 0, len(text), 0
+    while i < n:
+        ch = text[i]
+        if quote:
+            if ch == "\\" and quote == '"':
+                i += 1
+            elif ch == quote:
+                quote = ""
+        elif ch == "\\":
+            i += 1
+        elif ch in "'\"`":
+            quote = ch
+        elif ch == "#" and (i == 0 or text[i - 1] in " \t\n;&|("):
+            j = text.find("\n", i)
+            i = n if j < 0 else j - 1
+        elif ch == "$" and text.startswith("$(", i):
+            subst += 1
+            i += 1
+        elif ch == ")" and subst:
+            subst -= 1
+        elif ch == "\n" and not subst:
+            while h < len(inside_heredoc) and inside_heredoc[h][1] <= i:
+                h += 1
+            if not (h < len(inside_heredoc) and inside_heredoc[h][0] <= i < inside_heredoc[h][1]):
+                cuts.append(i + 1)
+        i += 1
+    return cuts
+
+
+def _strictest(findings: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    return max(findings, key=lambda f: _DECISION_RANK[f["decision"]], default=None)
+
+
+def _judge_ref(ref: _ScriptRef, config: Dict[str, Any], cwd: Optional[str], scan: _ScriptScan) -> Optional[Dict[str, Any]]:
+    findings: List[Dict[str, Any]] = []
+    for body, hint in ref.written:
+        lang = ref.lang or scriptfile.shebang_language(body) or hint or "shell"
+        found = _judge_script_text(
+            body, lang if lang != "notebook" else "shell", f"{ref.path} (written by this command)", config, cwd, scan
+        )
+        if found:
+            findings.append(found)
+    results = [(c, scriptfile.read_script(c)) for c in ref.candidates]
+    readable = next(((c, r) for c, r in results if r.status == scriptfile.OK), None)
+    if readable:
+        found = _judge_file(readable[1], ref, config, cwd, scan)
+        if found:
+            findings.append(found)
+    elif not findings and not ref.written:
+        statuses = {r.status for _, r in results}
+        label = ref.candidates[0]
+        if scriptfile.UNREADABLE in statuses:
+            why = next(r.why for _, r in results if r.status == scriptfile.UNREADABLE)
+            return _script_refusal(f"Script {label} cannot be read ({why or 'unreadable'})", "core.script-unreadable")
+        if scriptfile.TOO_LARGE in statuses:
+            return _script_refusal(f"Script {label} too large to analyze safely", "core.script-too-large")
+        if statuses == {scriptfile.MISSING} and ref.prior:
+            return _script_refusal(
+                f"Script {label} does not exist yet and this command names it before running it — nothing can read what it holds",
+                "core.script-unverifiable",
+            )
+    return _strictest(findings)
+
+
+def _judge_file(
+    file: "scriptfile.ScriptFile", ref: _ScriptRef, config: Dict[str, Any], cwd: Optional[str], scan: _ScriptScan
+) -> Optional[Dict[str, Any]]:
+    real = file.real
+    if real in scan.stack:
+        return None  # a script that runs itself, directly or through others: its text is being judged already
+    if real in scan.done:
+        return scan.done[real]
+    if scan.depth >= MAX_SCRIPT_DEPTH:
+        return _script_refusal(
+            f"Script {real} is nested {MAX_SCRIPT_DEPTH} scripts deep — too deep to analyze safely", "core.script-depth"
+        )
+    if scan.files >= MAX_SCRIPT_FILES or scan.nbytes + len(file.text) > MAX_SCRIPT_TOTAL_BYTES:
+        return _script_refusal(
+            f"This command runs more scripts than can be analyzed safely (reached {real})", "core.script-budget"
+        )
+    lang = ref.lang
+    if lang is None:
+        lang = scriptfile.shebang_language(file.text) or ("shell" if not file.text.startswith("#!") else None)
+    if lang is None:
+        return None  # a shebang naming an interpreter this scan does not read (awk, expect, ...)
+    scan.files += 1
+    scan.nbytes += len(file.text)
+    scan.stack.append(real)
+    try:
+        found = _judge_script_text(file.text, lang, real, config, cwd, scan)
+    finally:
+        scan.stack.pop()
+    scan.done[real] = found
+    return found
+
+
+def _script_verdicts(command: str, config: Dict[str, Any], cwd: Optional[str], scan: _ScriptScan) -> Iterator[Dict[str, Any]]:
+    """The finding for each file ``command`` runs (see SCRIPT INDIRECTION)."""
+    for ref in _script_refs(command, cwd):
+        found = _judge_ref(ref, config, cwd, scan)
+        if found:
+            yield found
+
+
+def authoring_language(file_path: str, content: str, notebook: bool = False) -> Optional[str]:
+    """The language of script-looking content being written to ``file_path``: shebang, then extension, else None."""
+    if notebook:
+        return "notebook"
+    lang = scriptfile.shebang_language(content) or scriptfile.extension_language(file_path)
+    if lang == "notebook":
+        return None
+    if lang is None and not content.startswith("#!") and not os.path.splitext(file_path)[1]:
+        try:
+            with open(file_path, "rb") as f:
+                lang = scriptfile.shebang_language(f.read(256).decode("utf-8", "replace"))
+        except OSError:
+            lang = None
+    return lang
+
+
+def check_script_content(
+    file_path: str, content: str, config: Dict[str, Any], cwd: Optional[str] = None, notebook: bool = False
+) -> Optional[Dict[str, Any]]:
+    """An ask when script-looking ``content`` for ``file_path`` holds what the ladder would stop if typed.
+
+    Writing a file runs nothing, and the run itself is blocked by the same ladder, so this is an
+    ASK whatever the typed verdict is (the finding's own words say which). Content too large to
+    judge is left to the run-time check, which refuses it.
+    """
+    if not content or len(content) > scriptfile.MAX_SCRIPT_BYTES or kill_switch_off(config):
+        return None
+    lang = authoring_language(file_path, content, notebook)
+    if lang is None:
+        return None
+    found = _judge_script_text(content, lang, file_path, config, cwd, _ScriptScan(), authoring=True)
+    if not found:
+        return None
+    return dict(found, decision="ask", reason=f"{found['reason']}; the same text typed would be {found['decision']}ed")
 
 
 # Last: judge by the generic profile until a host installs its own (see HOST PROFILE above).

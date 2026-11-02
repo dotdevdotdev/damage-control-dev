@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import List
 
-from damage_control import adapter, claude_code, policy
+from damage_control import adapter, claude_code, engine, policy, scriptfile
 
 OUT = Path(__file__).resolve().parent.parent / "docs" / "coverage.md"
 
@@ -36,7 +36,9 @@ def render() -> str:
             kind = tools[names[0]][0] if names else "?"
             fields = tools[names[0]][1] if names else ()
             judges = "the command line" if kind == "shell" else f"the path in `{'` / `'.join(fields)}`"
-        ask = "yes" if kind not in path_kinds else "no"
+            if kind in policy._SCRIPT_AUTHORING:
+                judges += f", and script-looking text in `{adapter.CONTENT_FIELDS[matcher]}`"
+        ask = "yes" if kind not in path_kinds or kind in policy._SCRIPT_AUTHORING else "no"
         rows.append(f"| `{matcher}` | `{hook}` | {judges} | yes | {ask} | yes |")
     unsupported = ", ".join(f"`{t}`" for t in UNSUPPORTED)
     return "\n".join([
@@ -52,13 +54,56 @@ def render() -> str:
         "|---|---|---|---|---|---|",
         *rows,
         "",
-        "`Ask` is *no* for the path tools: a path is either allowed or blocked. An `ask` outside an attended",
+        "`Ask` is *no* for the read tools: a path is either allowed or blocked. An `ask` outside an attended",
         "session becomes a block (unattended) or an allow (bypass permission mode) -- except an `unverifiable`",
         "one, which bypass never demotes.",
         "",
         f"**Unsupported (no hook is registered, so nothing is judged):** {unsupported}.",
         "",
+        *script_section(),
     ])
+
+
+def script_section() -> List[str]:
+    """The script-indirection coverage, from the constants the scan itself uses."""
+    shells = ", ".join(f"`{s}`" for s in sorted(engine._SCRIPT_SHELLS))
+    interpreters = ", ".join(sorted({lang for _, lang in scriptfile._INTERPRETER_LANGS if lang != "shell"}))
+    extensions = ", ".join(f"`{ext}`" for ext, lang in sorted(scriptfile._EXTENSION_LANGS.items()) if lang != "notebook")
+    return [
+        "## Script indirection",
+        "",
+        "A command that runs a file is judged on the file's text as well, by the same rules as a typed command.",
+        "The file is read when the hook runs; see the [threat model](threat-model.md#script-indirection).",
+        "",
+        "| What | Covered |",
+        "|---|---|",
+        f"| Shells run on a file | {shells} (`sh x.sh`, `bash -e x.sh`), also through `sudo`, `env`, `nohup`, `time` and the other wrappers, and inside `sh -c '…'` |",
+        "| Sourced files | `source x`, `. x` |",
+        "| A path run directly | `./x`, `/abs/x`, `dir/x`, resolved against the payload cwd and each literal `cd` before it; the file's `#!` line picks the language, no `#!` means shell |",
+        f"| Other interpreters on a file | {interpreters}: only the arguments of process-spawning and file-deleting calls are read, and a name bound once to a string literal is followed |",
+        "| Write then run in one command | a body written with `>`, `>>`, `tee`, a heredoc, `echo` or `printf`, then run by path, is judged as written |",
+        f"| Script text written with `Write`, `Edit` or `NotebookEdit` | a `#!` line, or an extension in {extensions}; a notebook code cell; the finding is an `ask` whatever the typed verdict is |",
+        "",
+        "| Limit | Value | When exceeded |",
+        "|---|---|---|",
+        f"| File size | {scriptfile.MAX_SCRIPT_BYTES // 1024} KiB | unverifiable `ask`, id `core.script-too-large` |",
+        f"| Scripts running scripts | {engine.MAX_SCRIPT_DEPTH} deep | unverifiable `ask`, id `core.script-depth` |",
+        f"| Files read per command | {engine.MAX_SCRIPT_FILES}, {engine.MAX_SCRIPT_TOTAL_BYTES // 1024} KiB in all | unverifiable `ask`, id `core.script-budget` |",
+        f"| Judging time per command | {engine.MAX_SCRIPT_SCAN_SECONDS} s | unverifiable `ask`, id `core.script-budget` |",
+        "| A file that cannot be read | permission denied, a symlink loop | unverifiable `ask`, id `core.script-unreadable` |",
+        "| A file this command names before running, and does not yet exist | `curl -o x.sh URL && sh x.sh` | unverifiable `ask`, id `core.script-unverifiable` |",
+        "",
+        "Inside a script, only what the rules positively recognize counts. A `# allow:` comment in a file is a",
+        "comment, and a computed verb or a substitution is not asked about. The escape comment still works on the",
+        "command that runs the script.",
+        "",
+        "**Not covered:** scripts fetched at run time (`curl URL | sh` is its own rule, id `core.fetched-program-pipe`);",
+        "recipes run by a tool (`make`, `just`, `npm run`, `pip install` hooks, `cargo build` scripts); binaries;",
+        "interpreters reading their program from stdin; a file that changes between the hook's read and the run;",
+        "obfuscated or computed commands in a script; paths held in variables (`bash \"$S\"`); scripts run by `find -exec`",
+        "or `xargs`; PowerShell scripts.",
+        "",
+    ]
 
 
 def main(argv: List[str]) -> int:
