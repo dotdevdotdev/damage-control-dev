@@ -1,372 +1,209 @@
 # Threat model
 
-What damage control protects against, what it does not, and the residuals. Moved verbatim from AgentWire's `docs/wiki/internals/damage-control.md`.
+damage-control-dev is a **seatbelt, not a sandbox**. It catches an AI coding agent that is about to do something destructive by mistake. It does not contain an agent, and it is not a boundary against anyone who is trying to get around it.
 
-## Security Model
+This page says what it is built to catch, what it does not catch, and where it fails open. Read it before you rely on it.
 
-### What Damage Control Protects Against
+- [What it is built to catch](#what-it-is-built-to-catch)
+- [What it does not protect against](#what-it-does-not-protect-against)
+- [How a decision is made](#how-a-decision-is-made)
+- [Fail-closed and fail-open](#fail-closed-and-fail-open)
+- [The scan budget](#the-scan-budget)
+- [The control plane and the kill switch](#the-control-plane-and-the-kill-switch)
+- [How shell commands are read](#how-shell-commands-are-read)
+- [Defense in depth](#defense-in-depth)
+- [Reporting a bypass](#reporting-a-bypass)
 
-✅ **Accidental catastrophic commands**
-- `rm -rf /` during parallel agent execution
-- `DROP DATABASE production` in wrong terminal
-- `chmod 777` on sensitive files
+## What it is built to catch
 
-✅ **Pattern-based risks**
-- Deleting AgentWire infrastructure
-- Modifying credentials/keys
-- Remote destructive operations
+The target is the **accidental** catastrophic call from an agent that is trying to help:
 
-✅ **Multi-agent amplification**
-- Parallel agents making same mistake
-- Cascading failures across sessions
+- Destructive file and process operations: `rm -rf`, `chmod 777`, `kill -9`, `dd` to a device.
+- Destructive git: `git reset --hard`, `git push --force`, `git clean -fd`, `git stash clear`.
+- Destructive SQL and database CLIs: `DROP TABLE`, `TRUNCATE`, `DELETE` with no `WHERE`, `FLUSHALL`.
+- Reads and writes of secrets: `.env` files, SSH and cloud credentials, private keys, Terraform state.
+- Edits to the guard's own configuration: the hook registration in `~/.claude/settings.json`, the policy file, rule overlays.
+- Risky MCP tool calls: path arguments that point at protected files, and the policies in the `mcp-tools` group.
+- Opt-in vendor packs for AWS, GCP, Firebase, container tooling, infrastructure-as-code and package publishing (`damage-control-dev packs list`).
 
-### What Damage Control Does NOT Protect Against
+It also helps when several agent sessions run in parallel and make the same mistake at once, because every session reads the same rules.
 
-❌ **Intentional malicious activity**
-- Attackers can bypass hook system
-- Not a replacement for proper auth/permissions
+The rules are tiered: some operations are **blocked**, some **ask** a human first. [Coverage](coverage.md) lists which tools are judged and how; [rule authoring](rule-authoring.md) explains the tiers.
 
-❌ **Logic errors**
-- Code bugs that cause data corruption
-- Application-level mistakes
+## What it does not protect against
 
-❌ **Supply chain attacks**
-- Malicious dependencies
-- Compromised packages
+- **A determined adversary.** A process running as your OS user can edit anything this tool can, including the Python environment the hook runs from. Same-user trust is assumed throughout.
+- **Commands you type yourself.** Claude Code runs a command you enter with a leading `!` without a `PreToolUse` event, so nothing here sees it.
+- **Tools with no hook event.** Only the tools in [coverage](coverage.md) are judged. `WebFetch`, `WebSearch`, `Task`/`Agent`, `Skill` and others are not.
+- **Network egress.** Nothing filters outbound connections or what is sent over them. A command that exfiltrates data with a harmless-looking verb is not stopped.
+- **The agent writing its own exemption.** A command that ends in `# allow: <reason>` is allowed, and that holds for hard blocks and path lists too (measured on 0.1.1: `rm -rf / # allow: x` and a read of a zero-access path both returned `allow`). The comment is part of the command text, so an agent can write it. It records a reason in the audit log; it is not authorization. The control plane is the exception and ignores it.
+- **Containment and resource limits.** No filesystem sandbox, no CPU, memory or disk quota, no process isolation.
+- **Logic errors and bad code.** Code that corrupts data through an application bug looks like any other code.
+- **Supply chain attacks.** A malicious dependency is not a destructive command until something runs it.
+- **Other harnesses and platforms.** Only Claude Code on macOS and Linux is supported.
 
-### A hook that times out FAILS OPEN (#1108)
+Expect false positives (an `ask` you did not need) and false negatives (a destructive command the rules do not know). The working policy is: ask, then learn. Add a rule when you find a gap.
 
-Measured with `claude -p` (2026-10-16): a `PreToolUse` command hook registered
-with `timeout: 2` that sleeps 8 s is killed at the timeout and the Bash call
-**runs anyway**; the same registration with a hook that exits 2 immediately
-blocks it. The harness treats a killed hook as "no decision". So a command that
-stalls the scan is a bypass of the whole ladder, not just a slow call.
+## How a decision is made
 
-The scan therefore has a budget that fails **closed** (`check_command`):
+Each tool call becomes one of three outcomes:
 
-| Axis | Limit | Verdict |
-|------|-------|---------|
-| Command size | 256 K chars | `ask`, id `core.command-too-large` |
-| Longest single line | 32 K chars | `ask`, id `core.command-too-large` |
-| Scan clock | 10 s (`SIGALRM`) | `ask`, id `core.scan-budget` |
+| Outcome | What the hook does | Exit code |
+|---|---|---|
+| allow | prints nothing | 0 |
+| ask | asks Claude Code to prompt you (a JSON `permissionDecision: "ask"` on stdout) | 0 |
+| block | writes the reason to stderr; the tool does not run | 2 |
 
-The verdicts are `unverifiable` asks: bypassPermissions/auto do not demote
-them, an unattended run blocks them, and the message names the cause. Limits
-come from the audit log of real commands (7.7 k rows: longest command 28.9 KB,
-longest line 2.9 KB), leaving ~9x / ~11x headroom. The cap counts PHYSICAL
-lines: backslash-continued lines are not joined, so 240 K of continued lines is
-scanned and bounded by the clock alone.
+Exit code 2 is the only code that stops a Claude Code tool call. Exit 1, which is what a crashed Python process produces, means "no decision" and lets the call run. The hook is built around that fact (below).
 
-**Every hook entrypoint fails closed.** A hook that crashes exits 1, which the
-harness treats as non-blocking. `read_hook_input` / `run_hook_guarded` (shared
-by all five hooks) turn malformed or oversized (> 64 M chars) stdin, a
-non-object payload, `RecursionError`, an escaped alarm and any other exception
-into exit 2 with a reason. The MCP hook additionally walks arguments
-iteratively, screens each distinct string once, and runs the screening under
-the same 10 s deadline (over it: an unverifiable `ask`, id `core.scan-budget`).
-Edit/write/read never scan `content` / `old_string` / `new_string` (50 MB
-payloads pass in ~0.1 s); only the path is checked.
+An `ask` is a question for a human, so what it becomes depends on who is there:
 
-**An audit-log failure never changes a decision.** Every `log_*` call in all
-five hooks goes through `audit_best_effort`: a full disk or an unwritable
-`logs/` dir prints one short stderr line and the computed decision stands. An
-allow stays an allow, and a genuine block keeps its real reason (not the audit
-error). Only a failure of the DECISION machinery fails closed.
+- **Attended, normal mode:** you are prompted.
+- **Bypass mode** (Claude Code `permission_mode` of `bypassPermissions` or `auto`): an `ask` is allowed without a prompt. The exception is an *unverifiable* ask (for example `eval "$x"`, where nothing can say what will run). Bypass never demotes those.
+- **Unattended** (`DAMAGE_CONTROL_UNATTENDED=1` in the environment of the Claude Code session): there is nobody to answer, so an `ask` becomes a **block**, unless the rule's id is granted in `unattended_allow` (or `DAMAGE_CONTROL_UNATTENDED_ALLOW`). Hard blocks are never granted. An unverifiable ask is blocked unless its own id is granted by name.
 
-**Exit code is the decision code.** `run_hook_guarded` ends with `hard_exit`
-(`os._exit` after a guarded flush), so closed pipes cannot turn a block into the
-interpreter's exit 120. If stdout cannot be flushed the decision cannot be
-delivered, so the exit becomes 2; a dead stderr is ignored.
+Real output from the hook, run against the installed package:
 
-**The kill switch and the budget.** `enabled: false` in `damagecontrol.yml` is
-read first (`kill_switch_off`) and turns the budget off with everything else: no
-size gate, and a scan or MCP screen that outruns the deadline is allowed
-(disabled), not asked, so a disabled hook no longer stalls unattended tasks
-with big commands. The control plane is exempt from that: what runs BEFORE the
-switch by design (protected paths and commands) still blocks while disabled.
-The guarantee for a PADDED command is "refused or asked", never allowed: when
-the deadline fires, `mentions_control_plane` (a linear, regex-free containment
-test over every protected path's literal, its basename, and its `$HOME`/`~`
-spellings) decides. If the command names a protected path, only the lines that
-name it are re-checked under their own 2 s deadline: a positive write is a
-BLOCK, anything unconcluded is the unverifiable `core.scan-budget` ask (bypass
-cannot demote it, unattended blocks it), in either switch state. If it names
-none, a disabled hook allows and an enabled one asks. The check over-matches by
-design (a bare `settings.json` mention counts), which only costs an ask once
-the budget is already spent; a padded read of a protected path therefore asks.
-The MCP over-budget path follows the same rule: a protected path anywhere in
-the arguments asks even with the switch off. A corrupt or unreadable `damagecontrol.yml` is the
-existing fail-secure behavior: `enabled` stays true.
+```
+$ echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"},"cwd":"/tmp"}' | python -I -m damage_control.hook bash
+SECURITY: Blocked: rm with recursive or force flags
+Command: rm -rf /
+$ echo $?
+2
 
-**Timeouts.** Hook registration writes `timeout: 30` (`HOOK_TIMEOUT_SECONDS`).
-`agentwire hooks install` UPDATES the timeout on existing agentwire-owned
-entries and `agentwire doctor` flags `[!!]` any registered matcher whose
-timeout is missing or differs from 30 (so also one below the deadline plus
-margin). The installer OVERWRITES a user-tuned value (2, 5, 120, `"30"`, 0,
-`true`): this is an upgrade, not a preference it respects. A malformed
-`settings.json` (`hooks: []`, a non-list `PreToolUse`, non-dict entries) is
-skipped entry by entry in doctor and left untouched, with a warning, by the
-installer; neither crashes. A hook registered with NO timeout was measured not
-to be killed at 100 s, so the harness default is > 100 s, far above the 10 s
-scan deadline.
+$ echo '{"tool_name":"Bash","tool_input":{"command":"kill -9 5"},"cwd":"/tmp"}' | DAMAGE_CONTROL_UNATTENDED=1 python -I -m damage_control.hook bash
+SECURITY: Blocked (unattended — no human to confirm): kill -9 (SIGKILL, no cleanup; use a plain kill first)
+Command: kill -9 5
+Why: rule 'core.kill-sigkill' is not on the unattended allowlist
+```
 
-**Re-measuring on a new Claude Code version.** In an empty temp dir, put a
-project-local `.claude/settings.local.json` registering a PreToolUse Bash hook
-(`"timeout": 2`, script sleeps 8 then exits 0; variant: no `timeout`, sleeps
-100 then exits 2), run `claude -p "run exactly this bash command: touch
-SENTINEL" --permission-mode bypassPermissions --allowedTools Bash`, and check
-whether `SENTINEL` exists. A control hook that exits 2 at once must block.
+To see a decision without wiring up a hook, use `damage-control-dev check`. It prints the decision and always exits 0, whatever the decision:
 
-Speed: the protected/zero-access path patterns are prefiltered on the path's
-required literal and `_PATH_ODDITY` is anchored at token starts. This makes
-long UNQUOTED tokens linear (10 k chars: 9.8 s -> 0.2 s) and plain quoted
-strings linear (30 k chars: 0.2 s). The glob-word scan (`_glob_tokens`, #1132)
-is one pass over the word runs: the single regex it replaced retried from every
-offset of a long run holding no glob mark, which was the whole cost of a 7 000-
-fold `../` run (4.9 s), a 20 000-fold `\` run (2.1 s) and a 7 000-fold `{a,` run
-(1.8 s) — now 0.6 / 0.3 / 0.5 s, and doubling the input doubles the time for
-quoted and unquoted `../`, `a/b/`, `\` and `{a,` runs alike. The clock budget
-stays the backstop for a shape not yet found, not the mechanism for these.
-A writer verb next to a protected path stays blocked with a long quoted string
-before it, after it, or holding the path, balanced or not (pinned; a differential
-against main over that slice found no decision differences). Known allow, same
-as main: a writer AND the path both inside ONE quoted string (`ln`, `curl -o`)
-is data in a quote, not a command.
+```
+$ damage-control-dev check "git push --force origin main"
+block: git push --force (use --force-with-lease) [git.git-push-force-use-force-with-lease]
+$ damage-control-dev check "kill -9 123"
+ask: kill -9 (SIGKILL, no cleanup; use a plain kill first) [core.kill-sigkill]
+$ damage-control-dev check ls
+allow: No patterns matched
+```
 
-The read hook is linear in the path length (a 20 MB path takes ~4 s); edit/write
-scan only the path. All five hooks are bounded anyway (#1065): the edit/write/read/mcp
-entrypoints run `main` under the same 10 s `SIGALRM` scan deadline
-(`run_hook_guarded(main, deadline_seconds=…)`; over it = block exit 2), and EVERY
-hook starts a 20 s watchdog thread that exits the process with a block, so a
-hook can never outlive the 30 s harness timeout into "no decision".
+`check` judges the command only. It does not apply bypass or unattended mode; those come from the hook's input and environment.
 
-Why two: the signal is the only thing that interrupts a pattern stuck inside the
-regex engine (`re` checks for signals; a thread waiting on a timer needs the GIL,
-which a long C regex never yields) — but it needs POSIX and the main thread.
-The watchdog needs neither, so it covers Windows and any wait that releases the
-GIL (a hung `stat`/`realpath` on a network mount). **Declared residual:** a
-runaway regex on a platform without `SIGALRM` (Windows) outlives the watchdog
-too; the size gate is the only bound there. `check_command` called in-process
-from a portal worker thread keeps the old shape (size gate only; the watchdog
-exits the process and so is hook-only).
+## Fail-closed and fail-open
 
-### A command inside a compound body is judged like the same command at top level (#1112)
+The design goal is that anything going wrong *inside the hook* ends in a block. Some failures happen outside it, and those fail open.
 
-`case x in a|b) rm -rf /tmp/x;; esac` was allowed while the bare `rm -rf /tmp/x`
-was blocked, and the same hole covered `if`/`while`/`for`/`{ }`/`( )`/function
-bodies, `!`, `coproc`: an anchored rule matches only at a command position, and
-the position chain stopped at the first non-wrapper word (`case`, `then`, `{`,
-`a|b)`), and the ssh/global-option/concealment walkers each had their own copy of
-that blind spot. **Guaranteed now, in ONE place:** `strip_command_openers` (and
-the plain-word twin `strip_command_opener_words`) drops compound syntax from the
-front of every command before any walker runs, so the body command is seen
-exactly as at top level. It follows bash: the keywords (`if then else elif while
-until do ! time coproc function`) and `{` are reserved only as WHOLE words
-(`{rm`, `do{` stay plain words), while `(` and `)` always break words, so
-`(rm`, `then(`, `!(`, `f(){`, `f ( ) {`, `a)rm` open a command position glued or
-spaced. A `case` header is dropped through the first `)` after `in`, and the
-stripper keeps stripping while the remainder still starts with a `)`-bearing word,
-so a pattern holding its own parens (`"a)b"`, `[)]`, `a\\)`, `@(a|b)`, `$y`, `${y:-a)b}`)
-never leaves the body hidden. This is deliberately CONSERVATIVE: tokens arrive
-with quotes already resolved, so the first `)` is taken as the terminator and a
-harmless body may be over-read, never a destructive one under-read. A segment that
-opens with a command substitution (`$(date)`, a backtick) only counts a `)` that
-takes the paren depth negative. Function headers in every spacing (`f()`, `f ()`,
-`f ( )`, `f(  )`, `function f`, `function f ()`, newline before `{`) and `time -p`
-options are dropped too. Pattern words are never match starts, so a verb in an
-arm pattern is data: `case x in 'rm -rf') echo hi;; esac` is ALLOWED.
+### Fails closed
 
-Wired into: the masked-entry builder (anchored rules, ssh and git-config payloads,
-global-option stripping), `ambiguity_conceals_verb`, and `_feed_words` (producer
-and consumer of piped `echo`, heredoc and here-string feeds to ssh/at/shell).
-`_CD_RE` (directory tracking for control-plane writers) is a regex over raw text,
-so it carries the same opener list plus `time`/`nohup`/`env`/`sudo`/`VAR=1`
-prefixes. `command_scope_dirs` (the unattended grant evaluator) and
-`_parse_rm_command` REFUSE any segment that starts with compound syntax, because
-a `cd` behind `then`/`do`/`!` cannot be modelled. Not wired because nothing can
-observe it: `_stage_reads_program` and the prose-blanking runner check (the
-earlier wiring there was deleted; removing it changed no decision).
-
-Pinned by a differential (command x 70+ wrappers incl. the full pattern-form
-sweep, decision equal to top level, in all four kill-switch x unattended states)
-in `tests/unit/test_damage_control_bypass.py`, plus must-allow controls and
-exact-shape pins for the stripper.
-
-**Declared residuals:** a substitution in a
-case pattern is ask-tier, never allowed.
-
-### Indirect verbs and unreadable producers (batch 4)
-
-A verb the shell computes cannot be read, so it is **resolved** from what the
-same command defines and the result is judged by the same engine
-(`_indirect_verbs` feeds `_hidden_commands`; `_decide_command` recurses, so a
-resolved verb is decided exactly as typed — also inside `sh -c`/`ssh` payloads,
-which are walked too, with the definitions they mention, as an exported
-variable reaches them). Resolved: literal scalars and `export`s (`=` and `+=`,
-multi-valued if assigned twice), literal and associative arrays (`+=`, `[@]:n`
-slices), `for`/`select` lists (brace-expanded), `set --`, `alias n=v` (chains
-too), `${x:=d}` / `${x^^}` / `${x@Q}` forms, and functions (`{ }` and `( )`
-bodies, nested calls) — a call substitutes its arguments for `$1…`, `"$@"`,
-`$#` in the body and rescans it. Assignments are found after `then`/`do`/`else`/
-`{`/`(`/`)`/`!`, not only after `;`. `$x"al"` is read as `${x}"al"`, so
-`x=ev; $x"al" '…'` is the builtin. A defined variable is also substituted into
-text handed to a shell (`echo "$x -9 1" | sh`, `sh <<< "$x …"`, `at now <<< …`).
-Only the definitions a resolved command mentions travel with it, and a
-function whose verbs are all literal is not re-scanned per call (its body is
-scanned where it sits).
-
-What cannot be resolved asks (`core.indirect-verb`) in these cases: a variable
-filled by `read` / `mapfile` / a glob loop list, a head that is a literal
-PREFIX OF A BUILTIN glued to an expansion (`e${x}val`), or any unresolved
-expansion in a command that names a control-plane path — all `unverifiable`
-(never granted, never demoted by bypass, a block unattended); and a variable
-filled by an ordinary `$(…)` (`p=$(pick); $p x`), which keeps the plain,
-bypass-demotable ask such commands always had. A bare environment name
-(`$CC -o x`, `$EDITOR f`, `$VENV/bin/python`, `${HOME}/bin/t`, `"$@"` in a
-function that is only defined) passes, and so does any head with a literal `/`
-before the expansion (`./$script`, `bin/$tool`, `./scripts/$1.sh`) or a plain
-literal prefix that is not the start of a builtin (`python$V`, `pip$V`,
-`$CC$FLAGS`): those cannot spell `eval`/`exec`/`source`.
-
-**Measurement** (replay of `~/.agentwire/logs/damage-control`, 6,563 distinct
-Bash commands over 9 days, bundled rules, fake HOME — one fleet's own
-damage-control work dominates it, so read it as a floor on benign shapes, not a
-census): a `$VAR` in command position occurs in ~230 commands, 222 of them a
-same-command literal (`P=<path>/python; $P …`, `M=./mutate.sh; $M`), which
-resolution now judges instead of passing unread; 8 are truly unresolved
-(loop/substitution-filled). `$CC` / `$EDITOR` / `"$@"` as the verb: **0**, so
-the "bare environment name passes" carve-out costs nothing measurable and an
-ask there would be a silent loop for an unattended run. `alias` used as a verb:
-1; a function called in-command: ~490 rows, one repeated mutation-test script.
-`curl|wget … | sh`: 0 executions (3 rows are prose inside an issue/prompt body);
-`cat … | sh`: 0 executions. **Replay before/after: 0 diffs in 6,563
-commands, at the same wall time** (an earlier draft cost 3x on function-heavy
-scripts and timed out 14 of them into scan-budget asks — the replay is what
-found it; definitions now travel only where mentioned).
-
-**Unreadable producers.** `echo`/`printf`/heredoc/here-string feeds are read and
-judged (above). Any other producer piped into a program-reading shell or
-interpreter (`bash`, `sh`, `python3 -`, `lua`, `sudo -u root bash -s`,
-`busybox sh`; not `-c`, `-n`, or a script operand — a redirect such as `2>&1`
-is not an operand) or fed through `sh <(…)` / `. <(…)` / `source <(…)`, in the
-command, in any `-c`/ssh payload of it, or in a `( … )` group: a **download** (`curl|wget|fetch|aria2c|http|xh` anywhere in the
-pipeline) is a **block** (`core.fetched-program-pipe` — the classic remote-code
-run; the fix is to download, read, run the file, which no rule touches, and
-the measured use is zero); a file or another command's output is an
-`unverifiable` ask (`cat setup.sh | bash` → `bash setup.sh`). `curl … | jq`,
-`| python3 -c '…'`, `| sh -c 'wc'` and `curl -o f u && sh f` are unaffected.
-
-Declared residuals: a **computed consumer after a fetch pipe** (`c=sh; curl u | $c`,
-`| /bin/$c`, `| command $c`, `| $SHELL`, `| ${SH:-sh}`) is not recognised as a
-shell, so it allows; and a fetch pipe inside a substitution (`$(curl u | sh)`,
-backticks, `echo $(curl u | sh)`) is not blocked — it asks through the
-ordinary substitution rule (still gated, just not hard-blocked). Subscript
-assignments (`m[k]=v`, `a[0]=v`) resolve; a subscript computed from an
-expansion does not. Also: a function or alias defined in a *previous* command, a
-variable set in another command, `declare -n` namerefs, `${!x}` indirection and
-arithmetic heads (treated as environment names, so they pass unless the
-command names a control-plane path). A resolved verb is decided *as typed*, so
-two pre-existing gaps in the typed form remain visible here: a redirect before
-the verb (`>/dev/null kill -9 1`) and `env -S "kill -9 1"` are not read as the
-verb by the kill rule even without any indirection. An alias is not carried
-into `bash -c '…'` — the real shell does not either. Test:
-`tests/unit/test_damage_control_bypass.py`.
-
-### Hidden commands are judged as commands (#1136)
-
-Text another program RUNS is a command in its own right, whatever carries it:
-`<(…)` / `>(…)` bodies (the shell runs them whatever consumes the pipe), a
-heredoc / here-string / `echo`-`printf` pipe into a shell (or into `xargs -I{}
-sh -c '{}'`), and the value of an option or the program of an embedded language:
-
-| carrier | hidden command |
+| Failure | Result |
 |---|---|
-| `sed` | the `e command` command (any address form), the replacement of `s/x/<cmd>/e` |
-| `awk`/`gawk`/`mawk` | every string literal (and their concatenation) of a program that uses `system(`, `getline`, or a `|` pipe |
-| `tar` | `--to-command`, `--checkpoint-action=exec=`, `-I`/`--use-compress-program`, `-F`/`--info-script`/`--new-volume-script`, `--rsh-command`, `--rmt-command` |
-| `git` | `difftool -x/--extcmd`, `rebase -x/--exec`, `--upload-pack`/`--receive-pack`/`--exec` (fetch/pull/push/clone/ls-remote/archive), `clone -u`/`-c <exec-key>=`, `grep -O`, `filter-branch --*-filter`, `submodule foreach`, `bisect run`, set-form `config <exec-key> <value>` |
-| `npm exec` / `npx` | `-c`/`--call` |
-| `ssh`/`scp`/`sftp` | `-o ProxyCommand=`/`LocalCommand=`; scp/sftp `-S program` |
-| `sh -c '…'`, `ssh host '…'` | a hidden command *inside* the payload |
+| The hook cannot import the engine, or a module exits 0 at import | exit 2 |
+| Malformed, non-object or oversized (over 64M characters) stdin | exit 2 |
+| Any unhandled exception inside the hook | exit 2 |
+| A hook that outlives its own 20 s watchdog | the process exits 2 |
+| Command too large or scan out of time | an unverifiable `ask` (see the budget) |
+| The policy file does not parse | kill switch stays on, and every group and pack is loaded |
+| The interpreter or package is gone | blocked by `onFailure: block` in the registration |
 
-`_hidden_commands` collects them; `_decide_command` judges each with the same
-engine that judges it top-level and keeps the strictest verdict, and
-`_derived_commands` feeds the same list to the protected-path scan. So a
-payload's decision inside a carrier equals its decision alone — by
-construction, with no per-rule twin. The outer escape hatch / kill switch ends
-the walk (the hidden command is part of what the user waved through); an inner
-one can never lower the outer verdict. For the general rules an interpreter's
-stdin is NOT shell text (`python3 - <<< 'eval'` runs no eval); only the
-protected-path scan keeps reading it as shell, as before.
+`init` registers each hook with `onFailure: block`, which needs Claude Code 2.1.295 or newer. `init` refuses on older versions unless you pass `--fail-open`, which registers without it and records that choice.
 
-`parallel … :::`, `flock LOCK cmd` / `flock LOCK -c 'cmd'` and `docker|podman|nerdctl
-run|exec IMAGE cmd` (also `docker container exec`, `docker compose|docker-compose exec|run`, `kubectl exec POD -- cmd`; `--entrypoint` joins the command; a quoted `parallel 'cmd {}' :::` line is scanned whole) are hidden-command
-carriers for the verb rules too: the launched command is judged as if typed
-(`flock /tmp/l rm -rf /x` blocks like `rm -rf /x`). The eval check models the same
-grammars, so only the eval word's wrongful ask is gone — `docker run alpine ls`
-still asks, by the docker write-tier rule.
-`tests/unit/test_damage_control_bypass.py` is the differential.
+The hook runs as `python -I -m damage_control.hook`. `-I` keeps the working directory and `PYTHON*` variables out of the import path, so a file the agent plants in the project (a `json.py`, say) is not imported as part of the hook.
 
-**Declared residuals (undecidable statically, or text a program produces):**
-`sed e` with no operand and `awk system($0)` run input data; `awk -f prog` /
-`sed -f script` are files; an
-interpreter's stdin on a LOCAL run (`echo 'os.execute(…)' | lua`, `lua <<< …`,
-`… | python3`, `python3 - <<EOF`) is judged by the protected-path net only, not
-the general verb rules (a prose literal in a heredoc script would otherwise
-block, as `python3 -c` does); a remote interpreter's stdin IS judged.
-A here-string behind a same-line compound keyword (`if true; then sh <<< X; fi`,
-`for …; do bash <<< X; done`) and behind wrapper + `-c` (`sudo|env|nohup|timeout N
-bash -c 'sh <<< X'`, also heredoc) are judged like the bare form (#1144): the feed line
-is cut at its last segment break before its opener words are stripped, and the
-`-c` payload scan steps past prefix wrappers. Pinned by
-`test_damage_control_bypass.py` (every hidden-input form x every
-opener/wrapper == the top-level decision).
+An audit-log failure (full disk, unwritable log directory) never changes a decision. One line goes to stderr and the computed decision stands.
 
-### A `)` / `;` inside a word's data does not hide the verb (#1119)
+### Fails open
 
-`A=${x:-)} rm -rf /tmp/x` was ALLOWED while `rm -rf /tmp/x` was blocked. Two
-readers of the same text disagreed with bash about where a word ends:
+- **A hook that times out.** Measured on 2026-10-16 with `claude -p`: a `PreToolUse` command hook registered with `timeout: 2` that sleeps 8 s is killed at the timeout and the Bash call **runs anyway**. A hook that exits 2 immediately blocks it. The harness treats a killed hook as "no decision".
+  - Mitigation: `init` registers `timeout: 30`, the scan gives up at 10 s, and a 20 s watchdog exits with a block, so the hook decides before the harness can kill it. This holds as long as the machine is not so loaded that the process cannot run at all.
+  - `doctor` flags a registered matcher whose timeout is missing or differs from 30. `init` and `doctor --fix` reset it.
+- **User-typed `!` commands** and **tools without a hook** (above).
+- **Hooks turned off.** `uninstall`, the break-glass script, or removing the entries from `settings.json` all leave damage control off until you run `init` again.
+- **Older Claude Code with `--fail-open`.** A crash or missing interpreter lets the call run.
+- **The kill switch.** `enabled: false` disables rule enforcement on purpose (see below).
 
-- `_scan_masked_tokens` cut at `;` `&` `|` newline inside `${...}`, so the
-  second half started `}` and became the "command" with `rm` as its argument.
-- `strip_command_openers` took the first `)` of a head token as a case-arm
-  terminator. Tokens arrive quote-resolved, so `A='a)b' rm`, `A="a)b" rm`,
-  `A=a\)b rm`, `A=$'a)b' rm` and `A=${x:-)} rm` all looked like an arm ending
-  mid-word; the leftover was the head and the real verb an operand.
+To re-measure the timeout behavior on a new Claude Code version: in an empty directory, register a project-local `PreToolUse` Bash hook with `"timeout": 2` that sleeps 8 s and exits 0, run `claude -p "run exactly this bash command: touch SENTINEL" --permission-mode bypassPermissions --allowedTools Bash`, and see whether `SENTINEL` exists. Repeat with a hook that exits 2 at once as a control; it must block.
 
-Fix, in one place per reader. The scanner reads `${...}` (brace-depth, quote,
-escape and `$(`/backtick aware; only `${` nests, a bare `{` is data, as in
-bash), `$'...'` and an assignment subscript `name[...]=`/`+=` as ONE word
-(`_word_span`, helpers `_param_expansion_end`/`_ansi_c_end`/`_subscript_end`).
-A subscript only counts when `=` follows the `]` — `a[x;rm -rf /x]` is two
-commands in bash and stays two here. Every `)` the scanner knows is data
-(quoted, escaped, inside a span) is written as `_DATA_PAREN` for the opener
-stripper and restored right after, so no rule sees it. Walkers without quote
-info (`strip_command_opener_words`) get the span-aware `_first_paren_outside_spans`.
-`_ASSIGN_TOKEN_RE` now accepts a subscripted name, so `a[)]=1 rm` is a prefix
-assignment like `A=1 rm`.
+## The scan budget
 
-An unclosed `${` / `$'` / `[` is NOT a span: the scanner falls back to plain
-character scanning, which sees every verb in the remainder (errs closed for the
-operation). A `$'a\'b'` that shlex cannot parse is ask-tier via the existing
-"unbalanced quotes" ambiguity, as is any substitution inside an expansion.
+A slow scan is a bypass, because a killed hook allows. So the scan has a budget that fails toward asking:
 
-Pinned by a differential in `tests/unit/test_damage_control_bypass.py`
-(command x 20 constructs x 6 positions x 8 wrappers, equal to the top-level
-decision, plus the kill-switch-off / unattended states), with must-allow
-controls and scanner-shape pins.
+| Axis | Limit | Result when exceeded |
+|---|---|---|
+| Command size | 256 K characters | `ask`, id `core.command-too-large` |
+| Longest single line | 32 K characters | `ask`, id `core.command-too-large` |
+| Scan time | 10 s | `ask`, id `core.scan-budget` |
 
-**Declared residuals:** `normalize_subcommands` / `_scope_segments` still split
-with shlex punctuation (their consumers are the raw/unanchored haystacks, which
-see the verb regardless).
+These asks are *unverifiable*: bypass mode does not demote them and an unattended run blocks them. The limits were set from an audit log of 7.7 k real commands (longest command 28.9 KB, longest line 2.9 KB), which leaves roughly an order of magnitude of headroom. Lines are counted physically, so backslash-continued lines are not joined for the size check; only the clock bounds those.
 
-### Defense in Depth
+Edit, Write and Read calls are judged on the path only. Their `content`, `old_string` and `new_string` are never scanned, so a 50 MB payload costs about 0.1 s.
 
-Damage Control is ONE layer:
-- **System permissions**: Run AgentWire as non-root
-- **Backups**: Regular backups of critical data
-- **Version control**: Git commits for code changes
-- **Audit logs**: Track all operations
-- **Damage Control**: Block catastrophic commands
+If the scan runs out of time and the command mentions a protected path anywhere, only the lines that mention it are re-checked under a short deadline: a positive write is a block, anything unresolved is the unverifiable ask. A bare mention such as `settings.json` is enough to trigger this, which costs an extra ask once the budget is already spent.
 
----
+## The control plane and the kill switch
+
+Damage control reads its own configuration from files. If the agent it polices could write them, it could switch the guard off, act, and switch it back on. So the **control plane** is protected separately:
+
+- `~/.claude/settings.json` (the hook registration) and `~/.claude/hooks/*`
+- the policy file, `~/.damage-control/damagecontrol.yml`
+- any `.damagecontrol.yml` in a project
+- a host profile manifest, when one is in use (see [extending](extending.md))
+
+Writes, edits, deletes, moves and permission changes on these paths are blocked. The check runs **before** the `# allow: <reason>` escape comment and **before** the kill switch, so neither can override it. Only the path allowlist (`allowed_paths`, which lives in the same protected files) can re-permit a control-plane path, and an allowlist entry counts only if it names the file or its shape covers it. A location allowance such as `/tmp/*` does not.
+
+The kill switch is `enabled: false` in the policy file or a project `.damagecontrol.yml`. It turns the rules off; it does not turn the control-plane protection off. Verified against the installed package:
+
+```
+$ damage-control-dev check "rm -rf /tmp/x"            # with enabled: false in the policy file
+allow: safety disabled
+$ # the hook, same state, writing to the hook registration:
+SECURITY: Blocked: protected control-plane file (host-owned; edit on the host)
+exit=2
+```
+
+Mind the cost of an overly broad allowlist: because `allowed_paths` outranks control-plane protection, an entry such as `~/.claude/*` with `allow: all` would make the hook registration agent-writable. Keep entries narrow.
+
+## How shell commands are read
+
+Shell is hard to analyze statically. The engine does not execute or parse a full shell; it normalizes the command and runs rules over the result. What it does handle:
+
+- **Quoting and escaping tricks:** `"rm" -rf`, `r\m`, `R=rm; $R -rf x` read as `rm -rf x`.
+- **Compound syntax:** a command inside `if`/`while`/`for`/`case`/`{ }`/`( )`/function bodies is judged like the same command at top level.
+- **Wrappers and payloads:** `sudo`, `env`, `timeout`, `nohup`, `sh -c "…"`, `ssh host "…"`, `psql -c "…"`, `xargs`, `find -exec`, heredocs and here-strings fed to a shell. The wrapped text is judged as a command in its own right.
+- **Hidden-command carriers:** options that run programs, such as `tar --to-command`, `git -c core.sshCommand=…`, `git rebase --exec`, `ssh -o ProxyCommand=…`, `sed` `e`, and `awk` programs that call `system()`.
+- **Verbs the shell computes:** `x=ev; $x"al" …` is resolved from definitions in the same command (variables, arrays, aliases, functions, `for` lists) and judged as typed.
+- **Fetched programs:** a download piped into a shell (`curl … | sh`, `bash <(curl …)`) is blocked with id `core.fetched-program-pipe`. A non-download producer piped into a shell is an unverifiable ask.
+
+What it cannot decide asks rather than guesses: `eval`, base64-to-shell pipelines, a substitution that picks the command, a variable filled at run time. Such an ask carries id `core.ambiguous-command` or `core.indirect-verb`.
+
+### Declared residuals
+
+These are known gaps, stated so you do not discover them by accident:
+
+- **Run-time content.** The text of a list file (`cat list | xargs rm`) is judged by where the list lives, not by what it names. `rm $f` in a loop with non-literal operands is only as strict as the generic `rm` rule.
+- **State from another command.** A function, alias or variable defined in an earlier command, `declare -n` namerefs, and `${!x}` indirection are not resolved.
+- **Computed consumers after a fetch pipe.** `c=sh; curl u | $c` is not recognized as a shell and is allowed. A fetch pipe inside a substitution (`$(curl u | sh)`) asks instead of blocking.
+- **A local interpreter's stdin.** `python3 - <<EOF` and `echo '…' | lua` are checked against protected paths but not against the general verb rules.
+- **Programs in files.** `awk -f prog`, `sed -f script` and any script the agent writes then runs are not read.
+- **Check-then-use gaps.** The hook validates a path the command has not used yet.
+- **Quoted writer and path.** A writer verb and a protected path both inside one quoted string (`ln`, `curl -o`) is treated as data in a quote.
+- **Wrappers with no stable grammar.** `watch`, `script -qc` and similar that carry the command in a quoted string are judged by the payload rescan, not by position.
+- **Emptying a file.** Only listed spellings (`truncate`, `dd of=`, `: > f`, `cat /dev/null > f`, …) count as deleting a guarded file; a plain `> f` is an ordinary edit.
+
+If you find one of these closable, or find a gap that is *not* listed here, see [Reporting a bypass](#reporting-a-bypass).
+
+## Defense in depth
+
+Damage control is one layer. Keep the others:
+
+- Run the agent as a normal user, never root.
+- Keep backups of anything you cannot regenerate.
+- Commit often. Git history undoes most agent mistakes.
+- Keep the audit log (`logs/damage-control/<date>.jsonl` under `~/.damage-control/` or `$DAMAGE_CONTROL_HOME`, one JSON line per decision) and read it when something surprises you.
+- Prefer a container or VM when you need real containment. This tool is not that.
+
+## Reporting a bypass
+
+A bypass of a shipped rule that this document says should be caught is a vulnerability. A gap in the [declared residuals](#declared-residuals) is a known limit, not a vulnerability, though a way to close one is welcome.
+
+Report a bypass **privately**, through the "Report a vulnerability" button on the repository's Security tab. Do not open a public issue. See [SECURITY.md](../SECURITY.md) for the process and response targets.
