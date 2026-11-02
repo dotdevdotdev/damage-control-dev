@@ -2,11 +2,15 @@
 name = "damage-control-dev"
 dynamic = ["version"]
 description = "Damage control for AI coding agents: a PreToolUse guard that blocks or asks before destructive commands and protected-path writes (Claude Code)."
+readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
 authors = [{ name = "dotdev", email = "dev@dotdev.dev" }]
-keywords = ["ai", "agent", "claude-code", "safety", "hooks"]
+keywords = ["ai", "agent", "claude-code", "safety", "hooks", "guardrails"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Developers",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
@@ -15,6 +19,12 @@ classifiers = [
 # PyYAML is read ONLY for user-authored YAML (the policy file, rule/tooldef overlays); the
 # bundled rules ship as JSON, so a hook with no PyYAML still enforces every bundled rule.
 dependencies = ["pyyaml>=6.0"]
+
+[project.urls]
+Homepage = "https://github.com/dotdevdotdev/damage-control-dev"
+Source = "https://github.com/dotdevdotdev/damage-control-dev"
+Issues = "https://github.com/dotdevdotdev/damage-control-dev/issues"
+Security = "https://github.com/dotdevdotdev/damage-control-dev/security/policy"
 
 [project.scripts]
 damage-control-dev = "damage_control.cli:main"
