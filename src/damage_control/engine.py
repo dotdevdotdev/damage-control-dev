@@ -25,7 +25,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from damage_control import audit, scriptfile
 from damage_control.profile import GENERIC
@@ -59,6 +59,65 @@ def _rx(pattern: str, flags: int = re.IGNORECASE) -> "re.Pattern[str]":
     ``except re.error`` still fires at the same place.
     """
     return re.compile(pattern, flags)
+
+
+try:
+    from re import _parser as _sre_parse  # CPython 3.11+
+except ImportError:  # 3.9 / 3.10
+    import sre_parse as _sre_parse  # type: ignore[no-redef]
+
+
+def _literal_runs(seq: Any) -> List[str]:
+    """Runs of literal characters EVERY match of the parsed pattern ``seq`` must contain, in order.
+
+    Only the mandatory top-level spine counts: a run stops at anything that is not a plain literal
+    (a class, an anchor, a repeat, a lookaround) and an alternation or an optional group is never
+    entered, so each run is certain to appear, contiguous, in any text the pattern matches.
+    """
+    runs: List[str] = []
+    cur: List[str] = []
+    for op, av in seq:
+        if op == _sre_parse.LITERAL:
+            cur.append(chr(av))
+            continue
+        if cur:
+            runs.append("".join(cur))
+            cur = []
+        if op == _sre_parse.SUBPATTERN:
+            runs.extend(_literal_runs(av[-1]))
+    if cur:
+        runs.append("".join(cur))
+    return runs
+
+
+@functools.lru_cache(maxsize=None)
+def required_literal(pattern: str) -> str:
+    """The longest literal (lowercased, ASCII) every match of ``pattern`` contains; ``""`` when there is none worth testing.
+
+    A pattern whose literal is missing from a text cannot match it, so the regex need not run.
+    Rules are compiled case-insensitively (:func:`_rx`), so the literal is compared lowercased.
+    """
+    try:
+        runs = _literal_runs(_sre_parse.parse(pattern, re.IGNORECASE))
+    except (re.error, RecursionError, OverflowError):
+        return ""
+    ascii_runs = [r.lower() for r in runs if r.isascii() and len(r) >= 2]
+    return max(ascii_runs, key=len) if ascii_runs else ""
+
+
+@functools.lru_cache(maxsize=512)
+def _lowered(text: str) -> str:
+    return text.lower()
+
+
+def may_match(pattern: str, text: str) -> bool:
+    """False only when ``pattern`` (compiled by :func:`_rx`) provably cannot match ``text``.
+
+    Non-ASCII text always answers True: case-insensitive matching folds characters (``ſ`` matches
+    ``s``) that ``lower()`` does not, so the literal test is only trusted where it is exact.
+    """
+    need = required_literal(pattern)
+    return not need or not text.isascii() or need in _lowered(text)
 
 
 # ============================================================================
@@ -426,7 +485,12 @@ def canonicalize_command(command: str) -> str:
     ``/`` is an accepted boundary char), so no separate ``normpath`` of the raw
     command string — which is not a pure path — is attempted here.
     """
-    home = os.path.expanduser("~")
+    return _canonicalize_for(command, os.path.expanduser("~"))
+
+
+@functools.lru_cache(maxsize=512)
+def _canonicalize_for(command: str, home: str) -> str:
+    """:func:`canonicalize_command` for a given home: the path ladders ask it about the same text once per guarded pattern."""
     if not home or home == "~":
         return command
     out = command.replace("${HOME}", home).replace("$HOME", home)
@@ -495,6 +559,12 @@ def brace_variants(text: str) -> Optional[List[str]]:
     when there is nothing to expand and None when the expansion would exceed
     the cap (an expansion bomb), so the caller can fail closed.
     """
+    variants = _expand_braces(text)
+    return None if variants is None else list(variants)
+
+
+@functools.lru_cache(maxsize=512)
+def _expand_braces(text: str) -> Optional[Tuple[str, ...]]:
     pending = [text]
     done: List[str] = []
     while pending:
@@ -508,7 +578,7 @@ def brace_variants(text: str) -> Optional[List[str]]:
             pending.append(cur[:m.start()] + alt + cur[m.end():])
         if len(pending) + len(done) > _BRACE_VARIANT_CAP:
             return None
-    return done
+    return tuple(done)
 
 
 def _match_token(matched: str) -> str:
@@ -626,6 +696,50 @@ def match_path(file_path: str, pattern: str) -> bool:
         expanded_normalized.startswith(expanded_pattern)
         or expanded_normalized == expanded_pattern.rstrip('/')
     )
+
+
+class PathMatcher:
+    """``any(match_path(path, p) for p in patterns)`` without a call per pattern.
+
+    A prefix pattern matches when it is a character prefix of the path (or the path is the pattern
+    minus a trailing ``/``), so every prefix pattern of one length is answered by one set lookup
+    instead of one :func:`match_path` call each; only the globs are tried one by one. The answer is
+    the same as the brute-force ``any`` for every path (``test_path_matcher_equals_match_path``).
+    """
+
+    def __init__(self, patterns: Tuple[str, ...]) -> None:
+        self._globs: List[str] = []
+        exact: Set[str] = set()
+        folded: Set[str] = set()
+        for pattern in patterns:
+            expanded = _expanduser(pattern)
+            if is_glob_pattern(pattern):
+                self._globs.append(expanded.lower())
+            else:
+                exact.add(expanded)
+                folded.add(expanded.lower())
+        self._prefixes = {False: exact, True: folded}
+        self._whole = {False: {p.rstrip("/") for p in exact}, True: {p.rstrip("/") for p in folded}}
+        self._lengths = {fold: sorted({len(p) for p in group}) for fold, group in self._prefixes.items()}
+
+    def __call__(self, file_path: str) -> bool:
+        path = os.path.expanduser(os.path.normpath(file_path))
+        if self._globs:
+            lower = path.lower()
+            base = os.path.basename(path).lower()
+            if any(fnmatch.fnmatch(lower, g) or fnmatch.fnmatch(base, g) for g in self._globs):
+                return True
+        fold = _casefolds_paths(path)
+        if fold:
+            path = path.lower()
+        prefixes = self._prefixes[fold]
+        return path in self._whole[fold] or any(path[:n] in prefixes for n in self._lengths[fold])
+
+
+@functools.lru_cache(maxsize=16)
+def path_matcher(patterns: Tuple[str, ...], home: str) -> PathMatcher:
+    """The :class:`PathMatcher` for ``patterns`` (``home`` is part of the key: ``~`` expands to it)."""
+    return PathMatcher(patterns)
 
 
 def _path_forms(file_path: str) -> List[str]:
@@ -877,6 +991,12 @@ def _path_context_regex(path: str) -> str:
 
 
 def _path_literals(path: str) -> Tuple[str, ...]:
+    """:func:`_path_literals_in` for the current home (the one thing ``~`` expands to)."""
+    return _path_literals_in(path, os.environ.get("HOME", "") if path.startswith("~") else "")
+
+
+@functools.lru_cache(maxsize=1024)
+def _path_literals_in(path: str, home: str) -> Tuple[str, ...]:
     """Case-folded literals of which at least one must occur for ``path`` to match.
 
     The ``{path}`` regex is quadratic on a long token (#1108): ``[^\\s/]*``
@@ -899,8 +1019,17 @@ def _path_literals(path: str) -> Tuple[str, ...]:
 def _may_mention_path(text: str, literals: Tuple[str, ...]) -> bool:
     if not literals:
         return True
-    folded = text.casefold()
-    return any(lit in folded for lit in literals)
+    folded = _casefolded(text)
+    for lit in literals:
+        if lit in folded:
+            return True
+    return False
+
+
+@functools.lru_cache(maxsize=512)
+def _casefolded(text: str) -> str:
+    """``text.casefold()``, remembered: one command is tested against every guarded path's literals."""
+    return text.casefold()
 
 
 def path_ladder_haystacks(command: str, path: str) -> List[str]:
@@ -917,16 +1046,14 @@ def path_ladder_haystacks(command: str, path: str) -> List[str]:
     must still read as a delete of the path), so masking can only ever remove
     verbs that had no business pairing with it.
     """
-    try:
-        keep = _rx(_path_context_regex(path))
-    except re.error:
-        return [command]
-
     literals = _path_literals(path)
 
     def _mentions_path(token: str) -> bool:
         if not _may_mention_path(token, literals):
             return False
+        # compiled on first use: almost no token reaches here, so almost no path pays for it
+        # (the regex is built from escaped text and fixed fragments, so it always compiles)
+        keep = _rx(_path_context_regex(path))
         if keep.search(token):
             return True
         canon = canonicalize_command(token)
@@ -942,8 +1069,33 @@ def path_ladder_haystacks(command: str, path: str) -> List[str]:
         spellings.extend(v for v in brace_variants(text) or () if v not in spellings)
     haystacks: List[str] = []
     for text in spellings:
-        haystacks += [h for h in masked_subcommands(mask_sed_substitutions(text), keep=_mentions_path) if h not in haystacks]
+        haystacks += [h for h in masked_with_keep(mask_sed_substitutions(text), _mentions_path) if h not in haystacks]
     return haystacks
+
+
+def masked_with_keep(text: str, keep: Callable[[str], bool]) -> Sequence[str]:
+    """``masked_subcommands(text, keep)``, sharing the walk between every guarded path that keeps nothing.
+
+    The keep-predicate is consulted in exactly one place (a quoted content token), and answering
+    False there is the same as having no predicate. So the text is walked once with a recorder that
+    answers False and notes every token it was asked about; a path whose predicate rejects all of
+    them gets that walk's result, and only a path that accepts one pays for its own walk.
+    """
+    plain, asked = _masked_probe(text)
+    if not any(keep(token) for token in asked):
+        return plain
+    return masked_subcommands(text, keep)
+
+
+@functools.lru_cache(maxsize=64)
+def _masked_probe(text: str) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+    asked: List[str] = []
+
+    def record(token: str) -> bool:
+        asked.append(token)
+        return False
+
+    return tuple(masked_subcommands(text, record)), tuple(asked)
 
 
 def check_path_patterns(
@@ -3101,14 +3253,23 @@ def guarded_allowlist(
     home — never because the live ``$HOME`` happens to sit under the entry's
     directory (#1122: ``/tmp/*`` re-permitted ``~/.ssh/id_rsa`` at ``HOME=/tmp/x``).
     """
-    return [
-        e for e in allowed_paths
+    keep = _guarded_entry_indexes(
+        tuple(e["path"] for e in allowed_paths), tuple(guarded_patterns), os.environ.get("HOME", "")
+    )
+    return [allowed_paths[i] for i in keep]
+
+
+@functools.lru_cache(maxsize=64)
+def _guarded_entry_indexes(entry_paths: Tuple[str, ...], guarded_patterns: Tuple[str, ...], home: str) -> Tuple[int, ...]:
+    """Which entries :func:`guarded_allowlist` keeps; a function of the paths alone (and ``$HOME``), so a script's many chunks share it."""
+    return tuple(
+        i for i, path in enumerate(entry_paths)
         if (
-            not is_glob_pattern(e["path"])
-            and any(match_path(os.path.expanduser(e["path"]), pat) for pat in guarded_patterns)
+            not is_glob_pattern(path)
+            and any(match_path(os.path.expanduser(path), pat) for pat in guarded_patterns)
         )
-        or any(_entry_covers_control_plane(e["path"], pat) for pat in guarded_patterns)
-    ]
+        or any(_entry_covers_control_plane(path, pat) for pat in guarded_patterns)
+    )
 
 
 def _protected_path_patterns() -> List[str]:
@@ -3291,8 +3452,10 @@ def redact_prose_mentions(command: str, path: str) -> str:
     Declared residual: program detection uses the hook's PATH (see
     :func:`_reads_as_prose`).
     """
-    path_re = _rx(_path_context_regex(path))
     literals = _path_literals(path)
+    if not _may_mention_path(command, literals):
+        return command  # a quoted literal is redacted only if it mentions the path, and none can
+    path_re = _rx(_path_context_regex(path))
     out: List[str] = []
     last = 0
     for m in _QUOTED_LITERAL_RE.finditer(command):
@@ -3476,6 +3639,11 @@ def _protected_ancestor_dirs() -> List[str]:
 
 def _extracts_into_protected_dir(command: str) -> Optional[str]:
     """The protected directory a command extracts/downloads INTO, if any."""
+    return _extracts_into(command, os.environ.get("HOME", ""))
+
+
+@functools.lru_cache(maxsize=512)
+def _extracts_into(command: str, home: str) -> Optional[str]:
     for d in _protected_ancestor_dirs():
         expanded = os.path.expanduser(d)
         dir_re = r"(?:" + re.escape(expanded) + r"|" + re.escape(d) + r")"
@@ -4005,6 +4173,11 @@ def _command_words(line: str) -> List[str]:
 
     Operators are words of their own, with or without spaces (``|sh`` -> ``|``, ``sh``).
     """
+    return list(_command_words_of(line))
+
+
+@functools.lru_cache(maxsize=1024)
+def _command_words_of(line: str) -> Tuple[str, ...]:
     text = _REDIRECT_RE.sub(" ", line)
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=True)
@@ -4013,9 +4186,9 @@ def _command_words(line: str) -> List[str]:
         words: List[str] = []
         for w in lex:  # shlex fuses neighbouring operators (``)|``): one word per operator
             words.extend(_OPERATOR_TOKEN.findall(w) if _OPERATOR_ONLY.fullmatch(w) else [w])
-        return words
+        return tuple(words)
     except ValueError:
-        return text.split()
+        return tuple(text.split())
 
 
 def _feed_words(line: str) -> List[str]:
@@ -4444,9 +4617,14 @@ def _procsub_bodies(command: str) -> List[str]:
 
 def _segment_raw_words(command: str) -> List[List[str]]:
     """Each simple command's resolved words, quoted content intact (what the masked walk blanks)."""
+    return [list(words) for words in _segment_raw_words_of(command)]
+
+
+@functools.lru_cache(maxsize=256)
+def _segment_raw_words_of(command: str) -> Tuple[Tuple[str, ...], ...]:
     command = _strip_heredoc_bodies(command)
     assigns = {m.group(1): m.group(2).strip("'\"") for m in _ASSIGN_RE.finditer(command)}
-    out: List[List[str]] = []
+    out: List[Tuple[str, ...]] = []
     for toks in _scan_masked_tokens(command):
         words: List[str] = []
         for text, _fq, _ex in strip_command_openers([(t.replace(_DATA_PAREN, ")"), fq, ex) for t, fq, ex in toks]):
@@ -4454,8 +4632,8 @@ def _segment_raw_words(command: str) -> List[List[str]]:
                 text = text.replace("${%s}" % name, val).replace("$" + name, val)
             words.append(text)
         if words:
-            out.append(words)
-    return out
+            out.append(tuple(words))
+    return tuple(out)
 
 
 def _option_values(
@@ -4774,7 +4952,13 @@ def _hidden_commands(command: str, rules: bool = False) -> List[str]:
     ``rules`` selects the general rule scan (``_decide_command``); the protected-path scan keeps
     reading an interpreter's stdin as shell text too, as it always has (fail-closed net).
     """
-    return list(dict.fromkeys(
+    return list(_hidden_commands_for(command, rules, os.environ.get("HOME", "")))
+
+
+@functools.lru_cache(maxsize=256)
+def _hidden_commands_for(command: str, rules: bool, home: str) -> Tuple[str, ...]:
+    """:func:`_hidden_commands`, remembered: a text is asked about again by each variant and each recursion that reaches it."""
+    return tuple(dict.fromkeys(
         _stdin_program_commands(command, rules)
         + _procsub_bodies(command)
         + _exec_payload_commands(command, rules)
@@ -5961,6 +6145,10 @@ def _realpath_variants(command: str) -> List[str]:
 
 def _alias_target(path: str) -> Optional[str]:
     """Where ``path`` really lands, when that is a protected file or directory it is only an alias of; else None."""
+    return _remembered(("alias", path), lambda: _alias_target_now(path))
+
+
+def _alias_target_now(path: str) -> Optional[str]:
     try:
         if "/" not in path and not os.path.lexists(path):
             return None
@@ -6026,6 +6214,8 @@ def _guarded_test_for(
     ]
 
     answers: Dict[str, bool] = {}
+    protected_match = path_matcher(protected, home)
+    pattern_match = path_matcher(patterns, home)
 
     def guarded(path: str) -> bool:
         known = answers.get(path)
@@ -6034,7 +6224,7 @@ def _guarded_test_for(
         return known
 
     def _guarded(path: str) -> bool:
-        if is_protected_control_plane(path) or any(match_path(path, p) for p in patterns):
+        if protected_match(path) or pattern_match(path):
             return True
         fold = str.lower if _casefolds_paths(path) else str
         probe = fold(path) + "/"
@@ -8898,14 +9088,24 @@ def _masked_subcommand_entries(
         # anchored ones at real command positions — applies to them. Reads
         # ``raws`` because the masked walk above has already blanked quoted
         # payloads to ``_MASK``.
-        payloads: List[str] = []
-        ssh_payload = _ssh_remote_payload(raws)
-        if ssh_payload:
-            payloads.append(ssh_payload)
-        payloads.extend(_git_exec_config_payloads(raws))
-        for payload in payloads:
+        for payload in _segment_payloads(tuple(raws)):
             results.extend(_masked_subcommand_entries(payload, keep, _depth + 1))
     return results
+
+
+@functools.lru_cache(maxsize=4096)
+def _segment_payloads(raws: Tuple[str, ...]) -> Tuple[str, ...]:
+    """The commands one segment smuggles through its arguments (an ``ssh`` remote command, exec-valued ``git -c`` values).
+
+    A function of the segment's resolved tokens alone — not of the keep-predicate each guarded path
+    brings — so it is worked out once per distinct segment, not once per path.
+    """
+    payloads: List[str] = []
+    ssh_payload = _ssh_remote_payload(raws)  # type: ignore[arg-type]
+    if ssh_payload:
+        payloads.append(ssh_payload)
+    payloads.extend(_git_exec_config_payloads(raws))  # type: ignore[arg-type]
+    return tuple(payloads)
 
 
 #
@@ -9040,6 +9240,8 @@ def _search_match_entries(
 ) -> bool:
     """``re.search`` over entries, honoring each entry's allowed start spans."""
     for text, spans in entries:
+        if not may_match(pattern, text):
+            continue
         try:
             if spans is None:
                 if _rx(pattern).search(text):
@@ -9711,8 +9913,9 @@ _SED_SUBST_RE = re.compile(r"^s(?P<d>[^\\\w\s])(?:(?!(?P=d)).)*(?P=d)(?:(?!(?P=d
 _SED_PLACEHOLDER = "'SED'"
 
 
+@functools.lru_cache(maxsize=512)
 def mask_sed_substitutions(command: str) -> str:
-    """``command`` with simple quoted sed substitution scripts replaced by a placeholder."""
+    """``command`` with simple quoted sed substitution scripts replaced by a placeholder (remembered: every guarded path asks)."""
     if "sed" not in command:
         return command
     tokens = _prose_tokens(command)
@@ -9871,6 +10074,38 @@ def _on_scan_alarm(signum: int, frame: Any) -> None:
     raise ScanBudgetExceeded()
 
 
+_DECISION = threading.local()
+
+
+@contextlib.contextmanager
+def decision_memo():
+    """Remember filesystem answers for the length of ONE decision (and only that one).
+
+    A script is judged as dozens of chunks that name the same paths; each chunk would ask the
+    filesystem the same ``realpath`` question again (a network or automounted prefix makes that
+    cost a millisecond a path). Nothing runs between the first question and the verdict, so the
+    answer cannot go stale inside it; outside it no memo exists, so no call ever sees an old one.
+    """
+    outer = getattr(_DECISION, "memo", None) is None
+    if outer:
+        _DECISION.memo = {}
+    try:
+        yield
+    finally:
+        if outer:
+            _DECISION.memo = None
+
+
+def _remembered(key: Tuple[Any, ...], compute: Callable[[], Any]) -> Any:
+    """``compute()``, remembered under ``key`` while a :func:`decision_memo` is open."""
+    memo = getattr(_DECISION, "memo", None)
+    if memo is None:
+        return compute()
+    if key not in memo:
+        memo[key] = compute()
+    return memo[key]
+
+
 @contextlib.contextmanager
 def scan_deadline(seconds: float):
     """Raise :class:`ScanBudgetExceeded` in the body once ``seconds`` elapse.
@@ -9982,7 +10217,7 @@ def check_command(
         if refusal:
             return refusal
     try:
-        with scan_deadline(deadline_seconds):
+        with scan_deadline(deadline_seconds), decision_memo():
             return _decide_command(command, config, cwd)
     except ScanBudgetExceeded:
         if mentions_control_plane(command):
@@ -10357,6 +10592,8 @@ def _decide_rules(
 
     def _search(pat: str, hays: List[str]) -> bool:
         for hay in hays:
+            if not may_match(pat, hay):
+                continue
             try:
                 if _rx(pat).search(hay):
                     return True
@@ -11503,7 +11740,8 @@ def check_script_content(
     lang = authoring_language(file_path, content, notebook)
     if lang is None:
         return None
-    found = _judge_script_text(content, lang, file_path, config, cwd, _ScriptScan(), authoring=True)
+    with decision_memo():
+        found = _judge_script_text(content, lang, file_path, config, cwd, _ScriptScan(), authoring=True)
     if not found:
         return None
     return dict(found, decision="ask", reason=f"{found['reason']}; the same text typed would be {found['decision']}ed")
