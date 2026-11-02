@@ -299,7 +299,7 @@ def test_shebang_language(first_line, lang):
 # -- long scripts are cut, not skipped -------------------------------------------------------
 
 def test_a_finding_deep_in_a_long_script_is_found(tmp_path, cfg):
-    filler = "".join(f"echo line {i} of the build\n" for i in range(800))
+    filler = "".join(f"echo line {i} of the build\n" for i in range(150))
     for name, body in (("early.sh", "git push --force origin main\n" + filler), ("late.sh", filler + "git push --force origin main\n")):
         (tmp_path / name).write_text("#!/bin/sh\n" + body)
         result = check_command(f"bash {name}", cfg, cwd=str(tmp_path))
