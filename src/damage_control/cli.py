@@ -1,4 +1,4 @@
-"""``damage-control-dev``: install, inspect and operate the Claude Code hooks (#1209 M5).
+"""``damage-control-dev``: install, inspect and operate the Claude Code hooks.
 
     damage-control-dev init [--scope user|project|managed] [--dry-run] [--refresh] [--fail-open]
     damage-control-dev status [--json]      # read-only drift report

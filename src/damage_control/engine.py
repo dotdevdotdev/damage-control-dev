@@ -1500,7 +1500,7 @@ def _record_load_failure(
     detail = getattr(exc, "problem", None) or str(exc) or type(exc).__name__
     where = f"{path}:{line}" if line else str(path)
     try:
-        print(f"agentwire damage-control: SKIPPED {where}: {detail}", file=sys.stderr)
+        print(f"damage-control: SKIPPED {where}: {detail}", file=sys.stderr)
     except Exception:
         # A dead stderr must not turn a reporting line into a changed verdict.
         pass
@@ -2782,7 +2782,7 @@ def unattended_grant_allows(
         # to a looser layer — see parse_unattended_allow.
         return False, (
             f"rule '{rule_id}' is named in unattended_allow but its entry is malformed, "
-            f"so it grants nothing (check `agentwire tasks review` for the reason)"
+            f"so it grants nothing"
         )
     if any(not s for s in scopes):
         return True, f"rule '{rule_id}' is granted unattended (unscoped)"
@@ -9920,7 +9920,7 @@ def audit_best_effort(log: Any) -> Any:
             log(*args, **kwargs)
         except Exception as e:
             try:
-                print(f"agentwire: audit log failed ({type(e).__name__}) — decision unchanged",
+                print(f"damage-control: audit log failed ({type(e).__name__}) — decision unchanged",
                       file=sys.stderr)
             except Exception:
                 pass

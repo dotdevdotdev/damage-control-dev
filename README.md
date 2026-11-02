@@ -19,7 +19,7 @@ Supports **Claude Code on macOS and Linux**, Python 3.9 or newer. Nothing else i
 - Protects its own control plane: the hook scripts, the settings that register them, and its policy file cannot be edited by the agent it guards.
 - Fails closed: any crash or import failure in the hook exits 2 (block), and `init` registers the hook with `onFailure: block` (Claude Code 2.1.295 or newer) so a missing interpreter blocks the call instead of silently allowing it.
 - Unattended mode: when no human can answer a prompt, an `ask` becomes a block unless a rule carries an explicit grant.
-- Rules ship as groups that are on by default (core, git, registry, payloads, remote, MCP tools, control plane) and opt-in vendor packs: `aws`, `gcp`, `firebase`, `cloud-hosting`, `databases`, `containers`, `infrastructure`, `publish`, `tmux`. Every rule has a frozen, stable id.
+- Rules ship as groups that are on by default (control-plane, core, git, uv, registry, payloads, remote, mcp-tools, outbound) and opt-in vendor packs: `aws`, `gcp`, `firebase`, `cloud-hosting`, `databases`, `containers`, `infrastructure`, `publish`, `tmux`. Every rule has a frozen, stable id.
 - Offline: after `init` nothing touches the network.
 
 ```
@@ -41,18 +41,21 @@ See [docs/threat-model.md](docs/threat-model.md).
 
 ## Where things live
 
-Everything the installer keeps is under `~/.damage-control/` (or `$DAMAGE_CONTROL_HOME`):
+Everything the installer keeps is under `~/.damage-control/` (or `$DAMAGE_CONTROL_HOME`), except the policy file, which is always `~/.damage-control/damagecontrol.yml`:
 
 - `damagecontrol.yml`: the protected policy (kill switch, `packs:`, `disabled_groups:`)
 - `damage-control/`, `tooldefs/`: your own rule overlays
 - `state/install.json`: what `init` recorded (interpreter, ruleset digest, per-scope write hash); `state/backups/` holds first-write backups of your settings file
 - `bin/damage-control-breakglass`: a stdlib-only script that unregisters the hooks if the Python environment is ever broken
+- `logs/damage-control/<date>.jsonl`: the audit log, one JSON line per decision
 
 A policy with no `packs:` key loads the default groups and no vendor packs; an unreadable policy loads everything.
 
 If the environment breaks (for example a `uv tool install --force` interrupted mid-upgrade) and the hook cannot start, every tool call is blocked by design. Run `python3 ~/.damage-control/bin/damage-control-breakglass unregister` from a normal terminal, then reinstall and run `init` again.
 
 ## Docs
+
+Start at [docs/index.md](docs/index.md).
 
 - [docs/threat-model.md](docs/threat-model.md): what it protects against and the residuals
 - [docs/coverage.md](docs/coverage.md): which tools are covered and how
