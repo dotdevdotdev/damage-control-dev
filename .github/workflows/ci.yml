@@ -51,6 +51,10 @@ jobs:
           python -m pip install pyyaml
           python tools/build_rules_json.py src/damage_control/rules src/damage_control/tooldefs
           git diff --exit-code -- src/damage_control
+      - name: Tests
+        run: |
+          python -m pip install pytest pyyaml
+          python -m pytest tests -q
       - name: Hook blocks a destructive command and allows a harmless one
         run: |
           echo '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/tmp"}' | python -I -m damage_control.hook bash
