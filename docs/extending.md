@@ -6,18 +6,18 @@ How a host (an application embedding the engine) adds what is dangerous around i
 
 The engine knows what is dangerous in general; the host adds what is dangerous around itself.
 
-- **`packages/damage-control-dev/src/damage_control/profile.py`** — `Profile`: protected paths, control-plane words, benign-path patterns,
+- **`src/damage_control/profile.py`** — `Profile`: protected paths, control-plane words, benign-path patterns,
   `home_alias`, protected commands, the unattended env names and default grant ids, extra rules
   dirs, MCP command templates, groups/packs, the grant hint and the block notifier (an argv run detached with the event as JSON on its stdin: `{"event": "unattended_block", "reason", "rule_id", "command"}`). It only ADDS to
   the kernel in `engine.py` (the project policy file, Claude Code's `settings.json` and hooks dir,
   the profile's own policy file), so no profile can remove or loosen a kernel entry, and the
   control-plane / protected-command checks still run before the kill switch.
 - **A host's profile module** — e.g. AgentWire's `agentwire/safety_ext.py` (`build_profile`, `write_manifest`, `install`, `status`, `activate`): its WHOLE surface. In-process host code activates it; hooks load the manifest. The engine ships an empty default grant list. The profile fields are: protected paths and commands, `home_alias`, the unattended env names and default grant ids, the grant hint, the block notifier, extra rules dirs, MCP command templates, groups/packs and default packs, the config home, and the `audit` field (log dir, session/agent env names, session-record dir).
-- **`packages/damage-control-dev/src/damage_control/policy.py`** — `Guard.decide(ToolCall, Context) -> Verdict`, the ladder that used to be
+- **`src/damage_control/policy.py`** — `Guard.decide(ToolCall, Context) -> Verdict`, the ladder that used to be
   copy-pasted into the five hook `main()`s. Pure: it returns the audit row, stderr lines and
   notification as data. The engine is passed in, so tests drive it with a stub engine
   (`tests/unit/test_policy_ladder.py`).
-- **`packages/damage-control-dev/src/damage_control/adapter.py`** — payload -> `ToolCall`/`Context`, and `render(verdict)`, the one place a
+- **`src/damage_control/adapter.py`** — payload -> `ToolCall`/`Context`, and `render(verdict)`, the one place a
   decision becomes an exit code. Each hook `main()` is `load config -> parse -> decide -> render`.
 - **Sources** — `load_config` takes a list of rule dirs and one or more tooldef dirs, in precedence
   order (bundled, profile layers, host override). Merging is additive; a repeated rule id across

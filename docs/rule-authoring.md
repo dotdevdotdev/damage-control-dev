@@ -4,7 +4,7 @@ How rules, tooldefs, groups and packs are written and loaded. Moved verbatim fro
 
 ## Security Patterns
 
-Patterns live in **categorized YAML files** (committed beside their JSON, which the hook reads — `packages/damage-control-dev/tools/build_rules_json.py`) under `packages/damage-control-dev/src/damage_control/rules/` (generic, one per topic) and `agentwire/safety/rules/` (the AgentWire/owner layer, #1209 M2: `~/.agentwire` paths, `mcp__agentwire__*` policies, `agentwire email|quo`, the owner `.env` allow). Both are read from the package and merge in file-name order, so `agentwire-mcp-tools.yaml` sorts ahead of the generic `mcp-tools.yaml` write-shaped fallback; file names must be unique across the two dirs. `tmux.yaml` is the opt-in generic `tmux` pack (AgentWire enables it by default; heal carries it forward on a machine whose overlay `agentwire.yaml` still held the tmux rules). `scripts/effective_rules.py --check` diffs the merged rule set against `corpus/golden/effective_rules.json`. To override or extend, drop YAML files into `~/.agentwire/damage-control/`: a file there REPLACES the bundled file of the same name and adds to the rest (the bundle is never dropped). Needs PyYAML; without it the file is skipped with a loud load failure and the bundled rules still enforce.
+Patterns live in **categorized YAML files** (committed beside their JSON, which the hook reads — `tools/build_rules_json.py`) under `src/damage_control/rules/` (generic, one per topic) and `agentwire/safety/rules/` (the AgentWire/owner layer, #1209 M2: `~/.agentwire` paths, `mcp__agentwire__*` policies, `agentwire email|quo`, the owner `.env` allow). Both are read from the package and merge in file-name order, so `agentwire-mcp-tools.yaml` sorts ahead of the generic `mcp-tools.yaml` write-shaped fallback; file names must be unique across the two dirs. `tmux.yaml` is the opt-in generic `tmux` pack (AgentWire enables it by default; heal carries it forward on a machine whose overlay `agentwire.yaml` still held the tmux rules). `scripts/effective_rules.py --check` diffs the merged rule set against `corpus/golden/effective_rules.json`. To override or extend, drop YAML files into `~/.agentwire/damage-control/`: a file there REPLACES the bundled file of the same name and adds to the rest (the bundle is never dropped). Needs PyYAML; without it the file is skipped with a loud load failure and the bundled rules still enforce.
 
 ### Flag position: `{ARGS}` (#1125)
 
@@ -151,7 +151,7 @@ is the *production-targeting* one, which inverts the guard: it held for the
 default target and dropped for the named remote one.
 
 The fix is one normalizer at the shared matching seam, driven by a per-tool data
-table (`_GLOBAL_OPTION_TABLE` in `packages/damage-control-dev/src/damage_control/engine.py`). Rules do not need
+table (`_GLOBAL_OPTION_TABLE` in `src/damage_control/engine.py`). Rules do not need
 to know about it: `global_option_normalized_haystacks()` emits an **extra**
 haystack per subcommand with the tool's global options removed, and present and
 future rules inherit the fix.
@@ -345,7 +345,7 @@ readOnlyPaths:
   - /myapp/config/production.yaml
 ```
 
-**Heads-up:** a file in the override directory **replaces the bundled file of the same name** and every other bundled file stays on. Copy from `packages/damage-control-dev/src/damage_control/rules/` only to change a bundled file.
+**Heads-up:** a file in the override directory **replaces the bundled file of the same name** and every other bundled file stays on. Copy from `src/damage_control/rules/` only to change a bundled file.
 
 **Pattern Tips**:
 - Declare `anchored:` on every rule — `true` for a command-prefix rule, `false`

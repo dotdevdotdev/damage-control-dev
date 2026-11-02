@@ -61,7 +61,7 @@ def main(argv: List[str]) -> int:
     text = render()
     if argv == ["--check"]:
         if not OUT.exists() or OUT.read_text() != text:
-            print(f"{OUT} is stale; run: uv run python packages/damage-control-dev/tools/coverage_matrix.py", file=sys.stderr)
+            print(f"{OUT} is stale; run: uv run python tools/coverage_matrix.py", file=sys.stderr)
             return 1
         return 0
     OUT.parent.mkdir(parents=True, exist_ok=True)

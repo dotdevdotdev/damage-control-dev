@@ -63,7 +63,7 @@ def main(argv: List[str]) -> int:
     for problem in problems:
         print(problem, file=sys.stderr if args.check else sys.stdout)
     if args.check and problems:
-        print("run: packages/damage-control-dev/tools/build_rules_json.py <dirs>", file=sys.stderr)
+        print("run: tools/build_rules_json.py <dirs>", file=sys.stderr)
         return 1
     return 0
 
