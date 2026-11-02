@@ -33,5 +33,7 @@ jobs:
           git diff --exit-code -- src/damage_control
       - name: Hook blocks a destructive command and allows a harmless one
         run: |
-          echo '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/tmp"}' | python -I -m damage_control.hook bash; test $? -eq 0
-          echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"},"cwd":"/tmp"}' | python -I -m damage_control.hook bash; test $? -ne 0
+          echo '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/tmp"}' | python -I -m damage_control.hook bash
+          rc=0
+          echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"},"cwd":"/tmp"}' | python -I -m damage_control.hook bash || rc=$?
+          test "$rc" -eq 2
