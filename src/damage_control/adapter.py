@@ -34,7 +34,11 @@ _HOOK_EVENT = "PreToolUse"
 
 _Tools = Optional[Dict[str, Tuple[str, Tuple[str, ...]]]]
 
-# hook kind -> (tool table, whether it judges shell commands and so loads the tooldefs).
+# Where the text a path tool writes sits in its payload: Write ``content``, Edit ``new_string``, a
+# notebook cell ``new_source``. Script-looking text is judged like the commands it holds.
+CONTENT_FIELDS: Dict[str, str] = {"Write": "content", "Edit": "new_string", "NotebookEdit": "new_source"}
+
+# hook kind -> (tool table, whether it judges shell commands -- or script text -- and so loads the tooldefs).
 # ``None`` for a table means every tool is an ``mcp`` call; the decision itself lives in
 # ``policy.Guard``.
 HOOK_KINDS: Dict[str, Tuple[_Tools, bool]] = {
@@ -44,8 +48,8 @@ HOOK_KINDS: Dict[str, Tuple[_Tools, bool]] = {
     # like Edit but names its target ``notebook_path``: an operation refused via Edit must
     # not be permitted via NotebookEdit (#923).
     "edit": ({"Edit": ("edit", ("file_path", "notebook_path")),
-              "NotebookEdit": ("edit", ("file_path", "notebook_path"))}, False),
-    "write": ({"Write": ("write", ("file_path",))}, False),
+              "NotebookEdit": ("edit", ("file_path", "notebook_path"))}, True),
+    "write": ({"Write": ("write", ("file_path",))}, True),
     # Read, Grep and Glob: judge the path they read or list. ``Glob`` only reveals filenames,
     # but a zero-access directory is still off-limits.
     "read": ({"Read": ("read", ("file_path",)), "Grep": ("read", ("path",)),
@@ -108,7 +112,11 @@ def parse_payload(payload: Dict[str, Any], tools: Optional[Dict[str, Tuple[str, 
         return None, ctx
     if kind == "shell":
         return tool_call(kind, tool_name, command=value, cwd=payload.get("cwd")), ctx
-    return tool_call(kind, tool_name, paths=(value,)), ctx
+    content = tool_input.get(CONTENT_FIELDS.get(tool_name, ""), "")
+    if tool_name == "NotebookEdit" and tool_input.get("cell_type") == "markdown":
+        content = ""
+    return tool_call(kind, tool_name, paths=(value,), cwd=payload.get("cwd"),
+                     content=content if isinstance(content, str) else ""), ctx
 
 
 def notify_unattended_block(engine: Any, subject: str, reason: str, rule_id: Optional[str]) -> None:

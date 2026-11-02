@@ -43,6 +43,9 @@ _WRITEISH_BRIDGE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Path kinds whose content may be a script.
+_SCRIPT_AUTHORING = frozenset({"write", "edit"})
+
 # Per path-kind: the phrase in the block message.
 _PATH_VERB = {"read": "read of", "write": "write to", "edit": "edit to"}
 
@@ -53,7 +56,8 @@ class ToolCall(NamedTuple):
     command: str = ""  # shell: the command line
     paths: Tuple[str, ...] = ()  # read / write / edit: the target path
     tool_input: Optional[Dict[str, Any]] = None  # mcp: the call's arguments
-    cwd: Optional[str] = None  # shell: the directory the harness reports
+    cwd: Optional[str] = None  # shell / write / edit: the directory the harness reports
+    content: str = ""  # write / edit: the text being written (Write ``content``, Edit ``new_string``, a notebook cell)
 
 
 class Context(NamedTuple):
@@ -123,7 +127,7 @@ class Guard:
 
     def decide(self, call: ToolCall, ctx: Context) -> Verdict:
         if call.kind in _PATH_VERB:
-            return self._decide_path(call)
+            return self._decide_path(call, ctx)
         if call.kind == "shell":
             return self._decide_command(call, ctx, call.command, synthesized=False)
         if call.kind == "mcp":
@@ -132,7 +136,7 @@ class Guard:
 
     # -- Read / Write / Edit ---------------------------------------------
 
-    def _decide_path(self, call: ToolCall) -> Verdict:
+    def _decide_path(self, call: ToolCall, ctx: Context) -> Verdict:
         e, path = self.e, call.paths[0]
         check = e.check_read_path if call.kind == "read" else e.check_path
         # The protected control plane is enforced even when safety is disabled, so
@@ -146,20 +150,34 @@ class Guard:
             )
         if self.config["safety"].get("enabled", True) is False:
             return Verdict(ALLOW, disabled=True, audit=_audit("disabled", call.tool_name, path))
+        if call.kind in _SCRIPT_AUTHORING and call.content:
+            # Script-looking content is judged like the commands it holds (script indirection):
+            # an ASK, never a block — writing runs nothing, and running the file is gated.
+            finding = e.check_script_content(
+                path, call.content, self.config, call.cwd, notebook=call.tool_name == "NotebookEdit"
+            )
+            if finding:
+                return self._finish(call, ctx, path, finding, f"Write: {path}", synthesized=False)
         return _allowed(call.tool_name, path)
 
     # -- Shell commands, and the shell command an outbound MCP tool runs --------
 
     def _decide_command(self, call: ToolCall, ctx: Context, command: str, synthesized: bool) -> Verdict:
         """``synthesized``: ``command`` stands in for an MCP tool call — it names no directory."""
-        e, tool = self.e, call.tool_name
+        e = self.e
         if synthesized:
             result = e.check_command(command, self.config)
         else:
             result = e.check_command(command, self.config, cwd=call.cwd)
+        shown = f"Command: {command[:100]}{'...' if len(command) > 100 else ''}"
+        return self._finish(call, ctx, command, result, shown, synthesized)
+
+    def _finish(self, call: ToolCall, ctx: Context, command: str, result: Dict[str, Any], shown: str,
+                synthesized: bool) -> Verdict:
+        """Turn an engine finding about ``command`` (a command line, or the path of a script being written) into a Verdict."""
+        tool = call.tool_name
         decision, reason = result["decision"], result["reason"]
         rule_id, pattern = result.get("id"), result.get("pattern")
-        shown = f"Command: {command[:100]}{'...' if len(command) > 100 else ''}"
 
         if decision == BLOCK:
             return Verdict(

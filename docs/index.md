@@ -16,6 +16,7 @@ Also: [SECURITY.md](../SECURITY.md) (reporting a vulnerability) and [CONTRIBUTIN
 ## Common questions
 
 - *Will it stop a command I type with `!`?* No. See [what it does not protect against](threat-model.md#what-it-does-not-protect-against).
+- *Does it look inside a script I run?* Yes, for files a command runs directly; see [script indirection](threat-model.md#script-indirection) for what that does and does not cover.
 - *How do I see what it would decide?* `damage-control-dev check "<command>"`; see [try a rule](rule-authoring.md#try-a-rule-check-and-rules).
 - *How do I turn on the AWS rules?* `damage-control-dev packs enable aws`, from your own terminal; see [groups and packs](rule-authoring.md#groups-and-packs).
 - *Every tool call is blocked and I cannot fix it.* Use [break-glass](extending.md#break-glass).

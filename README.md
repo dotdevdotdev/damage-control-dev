@@ -16,6 +16,7 @@ Supports **Claude Code on macOS and Linux**, Python 3.9 or newer. Nothing else i
 
 - Guards Bash, Edit, Write, Read and MCP tool calls through one policy ladder (allow, ask, block).
 - Re-scans wrapped commands as commands in their own right: `ssh host "..."`, `sh -c`, database clients (`psql -c`, `mysql -e`), `git -c` keys that run programs.
+- Reads the script a command runs: `bash x.sh`, `./x.sh`, `source x`, `python3 x.py` and a file written then run in one command are judged on the file's text with the same rules as a typed command, and script-looking text written with Write, Edit or NotebookEdit is checked on the way in. A seatbelt: it does not cover scripts fetched at run time, `make` or `npm run` recipes, binaries, or a file that changes after the hook read it. See [script indirection](docs/threat-model.md#script-indirection).
 - Protects its own control plane: the hook scripts, the settings that register them, and its policy file cannot be edited by the agent it guards.
 - Fails closed: any crash or import failure in the hook exits 2 (block), and `init` registers the hook with `onFailure: block` (Claude Code 2.1.295 or newer) so a missing interpreter blocks the call instead of silently allowing it.
 - Unattended mode: when no human can answer a prompt, an `ask` becomes a block unless a rule carries an explicit grant.

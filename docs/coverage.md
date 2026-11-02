@@ -10,16 +10,49 @@ CI fails if the committed file is stale. Regenerate with `python tools/coverage_
 |---|---|---|---|---|---|
 | `Bash` | `bash` | the command line | yes | yes | yes |
 | `PowerShell` | `bash` | the command line | yes | yes | yes |
-| `Edit` | `edit` | the path in `file_path` / `notebook_path` | yes | no | yes |
-| `NotebookEdit` | `edit` | the path in `file_path` / `notebook_path` | yes | no | yes |
-| `Write` | `write` | the path in `file_path` | yes | no | yes |
+| `Edit` | `edit` | the path in `file_path` / `notebook_path`, and script-looking text in `new_string` | yes | yes | yes |
+| `NotebookEdit` | `edit` | the path in `file_path` / `notebook_path`, and script-looking text in `new_source` | yes | yes | yes |
+| `Write` | `write` | the path in `file_path`, and script-looking text in `content` | yes | yes | yes |
 | `Read` | `read` | the path in `file_path` | yes | no | yes |
 | `Grep` | `read` | the path in `path` | yes | no | yes |
 | `Glob` | `read` | the path in `path` | yes | no | yes |
 | `mcp__.*` | `mcp` | the tool name and its path-valued arguments, plus, where a host profile maps the tool, the shell command it runs | yes | yes | yes |
 
-`Ask` is *no* for the path tools: a path is either allowed or blocked. An `ask` outside an attended
+`Ask` is *no* for the read tools: a path is either allowed or blocked. An `ask` outside an attended
 session becomes a block (unattended) or an allow (bypass permission mode) -- except an `unverifiable`
 one, which bypass never demotes.
 
 **Unsupported (no hook is registered, so nothing is judged):** `WebFetch`, `WebSearch`, `Task`, `Agent`, `Skill`, `Monitor`, `TodoWrite`, `AskUserQuestion`.
+
+## Script indirection
+
+A command that runs a file is judged on the file's text as well, by the same rules as a typed command.
+The file is read when the hook runs; see the [threat model](threat-model.md#script-indirection).
+
+| What | Covered |
+|---|---|
+| Shells run on a file | `ash`, `bash`, `dash`, `ksh`, `sh`, `zsh` (`sh x.sh`, `bash -e x.sh`), also through `sudo`, `env`, `nohup`, `time` and the other wrappers, and inside `sh -c '…'` |
+| Sourced files | `source x`, `. x` |
+| A path run directly | `./x`, `/abs/x`, `dir/x`, resolved against the payload cwd and each literal `cd` before it; the file's `#!` line picks the language, no `#!` means shell |
+| Other interpreters on a file | node, perl, python, ruby: only the arguments of process-spawning and file-deleting calls are read, and a name bound once to a string literal is followed |
+| Write then run in one command | a body written with `>`, `>>`, `tee`, a heredoc, `echo` or `printf`, then run by path, is judged as written |
+| Script text written with `Write`, `Edit` or `NotebookEdit` | a `#!` line, or an extension in `.bash`, `.cjs`, `.js`, `.ksh`, `.mjs`, `.pl`, `.py`, `.rb`, `.sh`, `.zsh`; a notebook code cell; the finding is an `ask` whatever the typed verdict is |
+
+| Limit | Value | When exceeded |
+|---|---|---|
+| File size | 256 KiB | unverifiable `ask`, id `core.script-too-large` |
+| Scripts running scripts | 3 deep | unverifiable `ask`, id `core.script-depth` |
+| Files read per command | 16, 1024 KiB in all | unverifiable `ask`, id `core.script-budget` |
+| Judging time per command | 4 s | unverifiable `ask`, id `core.script-budget` |
+| A file that cannot be read | permission denied, a symlink loop | unverifiable `ask`, id `core.script-unreadable` |
+| A file this command names before running, and does not yet exist | `curl -o x.sh URL && sh x.sh` | unverifiable `ask`, id `core.script-unverifiable` |
+
+Inside a script, only what the rules positively recognize counts. A `# allow:` comment in a file is a
+comment, and a computed verb or a substitution is not asked about. The escape comment still works on the
+command that runs the script.
+
+**Not covered:** scripts fetched at run time (`curl URL | sh` is its own rule, id `core.fetched-program-pipe`);
+recipes run by a tool (`make`, `just`, `npm run`, `pip install` hooks, `cargo build` scripts); binaries;
+interpreters reading their program from stdin; a file that changes between the hook's read and the run;
+obfuscated or computed commands in a script; paths held in variables (`bash "$S"`); scripts run by `find -exec`
+or `xargs`; PowerShell scripts.

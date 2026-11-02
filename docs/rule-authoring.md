@@ -328,6 +328,7 @@ For a shell command, roughly:
 3. Command rules with `ask: true`. A block found anywhere outranks them.
 4. `bypassable` rules, which pass if the allowlist covers every operand.
 5. Path lists: `allowedPaths` first, then `zeroAccessPaths`, `readOnlyPaths`, `noDeletePaths`.
+6. Commands hidden in the command (payloads of `sh -c`, `ssh`, and the like) and the files it runs, each judged by steps 1 to 5. The text of a file it runs is judged without the escape comment and without the ask for a computed verb or a substitution; see [script indirection](threat-model.md#script-indirection).
 
 What an `ask` does next depends on mode: a prompt for a human, allowed under bypass mode (unless unverifiable), blocked when unattended unless granted. See [How a decision is made](threat-model.md#how-a-decision-is-made).
 
