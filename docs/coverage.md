@@ -47,8 +47,8 @@ The file is read when the hook runs; see the [threat model](threat-model.md#scri
 | A file that cannot be read | permission denied, a symlink loop | unverifiable `ask`, id `core.script-unreadable` |
 | A file this command names before running, and does not yet exist | `curl -o x.sh URL && sh x.sh` | unverifiable `ask`, id `core.script-unverifiable` |
 
-Inside a script, only what the rules positively recognize counts. A `# allow:` comment in a file is a
-comment, and a computed verb or a substitution is not asked about. The escape comment still works on the
+Inside a script, only what the rules positively recognize counts. A `# ask:` comment in a file is a
+comment, and a computed verb or a substitution is not asked about. The comment counts on the
 command that runs the script.
 
 **Not covered:** scripts fetched at run time (`curl URL | sh` is its own rule, id `core.fetched-program-pipe`);

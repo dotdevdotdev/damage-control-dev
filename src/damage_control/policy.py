@@ -71,7 +71,7 @@ class Verdict(NamedTuple):
     rule_id: Optional[str] = None
     unverifiable: bool = False
     disabled: bool = False
-    escape: bool = False
+    escape_ask: bool = False
     allowed_by: Optional[str] = None
     # What the caller must do beyond the decision itself. All data: the ladder stays pure.
     audit: Optional[Tuple[str, Tuple[Any, ...], Dict[str, Any]]] = None  # (event, args, kwargs)
@@ -185,23 +185,42 @@ class Guard:
                 audit=_audit("blocked", tool, command, reason, pattern=pattern, rule_id=rule_id),
                 stderr=(f"SECURITY: Blocked: {reason}", shown),
             )
+        escape_ask = bool(result.get("escape_ask"))
         if decision == ASK and ctx.unattended:
+            if escape_ask:
+                return self._unattended_escape_ask(call, command, result, shown)
             return self._unattended_ask(call, command, result, shown, synthesized)
-        if decision == ASK and (ctx.mode != BYPASS or result.get("unverifiable")):
+        if decision == ASK and (ctx.mode != BYPASS or result.get("unverifiable") or escape_ask):
             # ``unverifiable`` (#934): a verb-concealing shape — eval, base64-pipe, a
             # substitution deciding what runs or feeding a wrapper's payload — keeps its
             # ask even under bypass. Bypass means "don't stop me for things you
             # recognize"; it never meant "don't stop me for things you can't see".
+            # An ``escape_ask`` (the agent wrote ``# ask:`` on a command that would be
+            # blocked) is the same: the agent chose to request it, so bypass cannot
+            # answer for the human.
+            if escape_ask:
+                return Verdict(ASK, reason, rule_id, escape_ask=True,
+                               audit=_audit("asked", tool, command, reason, pattern=pattern, rule_id=rule_id,
+                                            escape_reason=result.get("escape_reason"),
+                                            escalated_from=result.get("escalated_from")))
             return Verdict(ASK, reason, rule_id, unverifiable=bool(result.get("unverifiable")),
                            audit=_audit("asked", tool, command, reason))
-        if result.get("escape"):
-            return Verdict(ALLOW, escape=True,
-                           audit=_audit("escape", tool, command, result.get("escape_reason") or ""))
         if result.get("disabled"):
             return Verdict(ALLOW, disabled=True, audit=_audit("disabled", tool, command))
         if synthesized:
             return _allowed(tool, command)
         return _allowed(tool, command, allowed_by=result.get("allowed_by"))
+
+    def _unattended_escape_ask(self, call: ToolCall, command: str, result: Dict[str, Any], shown: str) -> Verdict:
+        """No human to decide an agent-requested exception: the block stands, whatever the grants say."""
+        reason, rule_id, pattern = result["reason"], result.get("id"), result.get("pattern")
+        text = f"{reason} — no human present to decide it"
+        return Verdict(
+            BLOCK, reason, rule_id,
+            audit=_audit("blocked", call.tool_name, command, f"unattended: {text}", pattern=pattern, rule_id=rule_id),
+            stderr=(f"SECURITY: Blocked (unattended — no human to confirm): {reason}", shown),
+            notify=(command, text, rule_id),
+        )
 
     def _unattended_ask(self, call: ToolCall, command: str, result: Dict[str, Any],
                         shown: str, synthesized: bool) -> Verdict:

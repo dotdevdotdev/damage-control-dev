@@ -3135,7 +3135,7 @@ def load_safety_config(
 
 
 # ============================================================================
-# PROTECTED CONTROL PLANE (escape-hatch- AND kill-switch-EXEMPT)
+# PROTECTED CONTROL PLANE (``# ask:``- AND kill-switch-EXEMPT)
 # ============================================================================
 #
 # Damage control reads its kill switch, its rules, and its own hook
@@ -3143,7 +3143,7 @@ def load_safety_config(
 # it can disable safety, act, and re-enable — defeating everything (#466). So
 # the WHOLE control plane is hard-protected: any write/edit/delete/move/chmod
 # targeting one of these paths is BLOCKED, and — unlike every other rule — the
-# ``# allow:`` escape hatch and the ``enabled: false`` kill switch do NOT
+# ``# ask:`` comment and the ``enabled: false`` kill switch do NOT
 # override it. Only the user's ``allowedPaths`` allowlist can re-permit a path,
 # because that is a human, host-side opt-in (the agent cannot add to it without
 # editing a protected file, which is itself blocked).
@@ -6742,7 +6742,7 @@ def check_protected_command(
 ) -> Tuple[bool, str]:
     """Block a bash command that writes/edits/deletes a control-plane file.
 
-    Mirrors the ``readOnlyPaths`` matcher but is escape-hatch- and
+    Mirrors the ``readOnlyPaths`` matcher but is ``# ask:``- and
     kill-switch-exempt. The user's allowlist may re-permit a specific path.
 
     Matches against masked subcommands (quotes/escapes resolved — ``r\\m``,
@@ -6838,7 +6838,7 @@ def _refused_for_quoted_substitution(
 
 
 # ============================================================================
-# PROTECTED COMMANDS (escape-hatch- AND kill-switch-EXEMPT, like the protected
+# PROTECTED COMMANDS (``# ask:``- AND kill-switch-EXEMPT, like the protected
 # control plane above, but keyed on COMMAND SHAPE rather than a file path)
 # ============================================================================
 #
@@ -6848,7 +6848,7 @@ def _refused_for_quoted_substitution(
 # it's the host-trusted program that copies a vetted draft into the protected
 # ``.agentwire.tasks.yml``. If a policed/unattended agent could just invoke
 # the CLI itself, the file protection above is moot — so this, like the
-# protected-path check, is evaluated before ``detect_escape_hatch`` and the
+# protected-path check, is evaluated before the ``# ask:`` escalation and the
 # kill switch, and has NO allowlist override (there's no legitimate reason
 # for an agent to ever run this; unlike a path, there's nothing to allowlist
 # it TO). This is defense in depth on TOP OF ``cmd_tasks_promote``'s own
@@ -6861,7 +6861,7 @@ def _refused_for_quoted_substitution(
 def check_protected_bash_command(command: str) -> Tuple[bool, str]:
     """Block a command matching a ``PROTECTED_COMMAND_PATTERNS`` entry.
 
-    Unconditional — no allowlist override, no escape hatch, no kill switch
+    Unconditional — no allowlist override, no ``# ask:``, no kill switch
     (see module note above). These are COMMAND-PREFIX patterns, so — like the
     ``anchored`` tooldef bashToolPatterns (#675) — matched only against
     ``masked_subcommands``: quoting/escaping of the command itself still
@@ -6880,22 +6880,79 @@ def check_protected_bash_command(command: str) -> Tuple[bool, str]:
     return False, ""
 
 
-_ESCAPE_HATCH_RE = re.compile(r"#\s*allow:[ \t]*([^\n]+)", re.IGNORECASE)
+_ASK_COMMENT_RE = re.compile(r"#\s*ask:[ \t]*([^\n]*)", re.IGNORECASE)
 
 
-def detect_escape_hatch(command: str) -> Optional[str]:
-    """Return the reason if ``command`` contains a ``# allow: <reason>`` marker.
+def detect_ask_request(command: str) -> Optional[str]:
+    """Return the reason if ``command`` ENDS in a ``# ask: <reason>`` comment.
 
-    Non-empty reason required; matches the rest of the comment line so the
-    marker works on multi-line / chained commands too.
+    The comment is the agent asking a human to decide a command that would be
+    blocked. It counts only as the last thing in the command: an unquoted ``#``
+    at the start of a word, on the final line, outside any ``$(...)``, backtick
+    pair or heredoc body. A ``# ask:`` inside quotes, in the middle of a command
+    or in the text of a script is data. A non-empty reason is required.
     """
     if not command:
         return None
-    m = _ESCAPE_HATCH_RE.search(command)
-    if not m:
-        return None
-    reason = m.group(1).strip()
-    return reason or None
+    depth = 0
+    ticks = False
+    heredoc = False
+    quote = ""
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 1
+            elif c == quote:
+                quote = ""
+        elif c == "\\":
+            i += 1
+        elif c in "'\"":
+            quote = c
+        elif c == "`":
+            ticks = not ticks
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif c == "<" and command.startswith("<<", i) and not command.startswith("<<<", i):
+            heredoc = True
+            i += 1
+        elif c == "\n":
+            if heredoc:
+                return None
+        elif c == "#" and (i == 0 or command[i - 1] in " \t\n;|&("):
+            if depth > 0 or ticks:
+                return None
+            m = _ASK_COMMENT_RE.match(command, i)
+            if not m or command[m.end():].strip():
+                return None
+            return m.group(1).strip() or None
+        i += 1
+    return None
+
+
+def escalate_requested_ask(command: str, verdict: Dict[str, Any]) -> Dict[str, Any]:
+    """``verdict``, with a block turned into an ask when the command ends in ``# ask: <reason>``.
+
+    The control plane stays a block. The ask carries ``escape_ask`` so the policy
+    ladder never demotes it (bypass) or grants it (unattended), and keeps the
+    block's rule id and pattern for the audit row.
+    """
+    if verdict["decision"] != "block" or verdict.get("protected"):
+        return verdict
+    reason = detect_ask_request(command)
+    if not reason:
+        return verdict
+    return dict(
+        verdict,
+        decision="ask",
+        reason=f"The agent asked for an exception to this block ({verdict['reason']}) — its reason: {reason}",
+        escape_ask=True,
+        escape_reason=reason,
+        escalated_from="block",
+    )
 
 
 # ============================================================================
@@ -10256,7 +10313,7 @@ def check_command(
             return refusal
     try:
         with scan_deadline(deadline_seconds), decision_memo():
-            return _decide_command(command, config, cwd)
+            return escalate_requested_ask(command, _decide_command(command, config, cwd))
     except ScanBudgetExceeded:
         if mentions_control_plane(command):
             return _control_plane_verdict_on_timeout(command, config, deadline_seconds)
@@ -10416,21 +10473,19 @@ def _decide_command(
     The strictest verdict wins (block > ask > allow), so a payload is decided
     exactly as it would be top-level: ``sh <<< 'X'``, ``cat <(X)``, ``sed 'e X'``
     and ``tar --to-command=X`` can neither relax nor invent a rule outcome.
-    The escape hatch and the kill switch on the OUTER command end the walk — a
-    hidden command is part of the command the user already waved through — and
-    an inner escape/disabled verdict is just an allow, never a way to lower the
-    outer one.
+    The kill switch on the OUTER command ends the walk — a hidden command is part of the
+    command the user already waved through — and an inner disabled verdict is just an
+    allow, never a way to lower the outer one.
 
     A file this command runs is read and judged too (see SCRIPT INDIRECTION). The text of a
-    script is judged as ``scripted``: a ``# allow:`` line in it is a comment, not the user's
-    escape hatch, and a computed verb or substitution in it (every real script has them) is not
+    script is judged as ``scripted``: a ``# ask:`` line in it is a comment, and a computed verb or substitution in it (every real script has them) is not
     asked about — only what the rule ladder positively recognizes counts.
     """
     scripted = _scan is not None and _scan.depth > 0
     verdict = _decide_rules(command, config, cwd, scripted)
     resolved = []
     if not verdict.get("protected"):
-        # The control plane outranks the escape hatch and the kill switch, so a
+        # The control plane outranks ``# ask:`` and the kill switch, so a
         # relative spelling of it is judged before either can end the walk.
         for variant in _cwd_resolved_variants(command, cwd, config):
             inner = _decide_rules(variant, config, cwd, scripted)
@@ -10440,7 +10495,6 @@ def _decide_command(
     if (
         _depth >= _RESCAN_DEPTH
         or verdict.get("protected")
-        or verdict.get("escape")
         or verdict.get("disabled")
         or verdict["decision"] == "block"
     ):
@@ -10451,9 +10505,7 @@ def _decide_command(
         (_decide_command(hidden, config, cwd, _depth + 1, _scan) for hidden in _hidden_commands(command, rules=True)),
         _script_verdicts(command, config, cwd, _scan),
     ):
-        if _DECISION_RANK[inner["decision"]] > _DECISION_RANK[verdict["decision"]] and not (
-            inner.get("escape") or inner.get("disabled")
-        ):
+        if _DECISION_RANK[inner["decision"]] > _DECISION_RANK[verdict["decision"]] and not inner.get("disabled"):
             verdict = dict(inner, command=command)
             if verdict["decision"] == "block":
                 return verdict
@@ -10505,15 +10557,14 @@ def _decide_rules(
     """Decide whether a bash command should be allowed/blocked/asked.
 
     Returns ``{decision, reason, pattern, command}`` plus optional ``id``,
-    ``escape_reason``, ``escape``, ``disabled``.
+    ``disabled``.
 
     Order:
-      0. Protected control plane → BLOCK (escape-hatch- AND kill-switch-exempt;
+      0. Protected control plane → BLOCK (``# ask:``- AND kill-switch-exempt;
          only the user's allowlist re-permits) — runs FIRST so an agent can't
          self-authorize a write to the files that gate everything else.
       0.5. Protected commands → BLOCK (same exemption, no allowlist override —
          a command whose mere invocation is the escape, not a path it touches).
-      1. Escape hatch (``# allow: <reason>``) → ALLOW (escape=True)
       2. Kill switch (``config["safety"]["enabled"] is False``) → ALLOW (disabled=True)
       3. Hard-blocked bash patterns (skip if ``id`` in ``disabled_rules``)
       4. Ask patterns
@@ -10528,7 +10579,7 @@ def _decide_rules(
 
     allowed = load_allowed_paths(config)
 
-    # Protected control plane FIRST — before the escape hatch and the kill
+    # Protected control plane FIRST — before ``# ask:`` and the kill
     # switch. An agent must never be able to self-authorize a write to the
     # files that define safety itself (#466).
     prot_blocked, prot_reason = check_protected_command(command, allowed)
@@ -10556,8 +10607,8 @@ def _decide_rules(
             "protected": True,
         }
 
-    # A directory the scanner cannot see: same tier (exempt from the escape
-    # hatch and kill switch), but an ASK — the command may be harmless, and
+    # A directory the scanner cannot see: same tier (exempt from ``# ask:``
+    # and the kill switch), but an ASK — the command may be harmless, and
     # `unverifiable` keeps bypass from demoting it.
     target_reason = unverifiable_target_verdict(command, control_plane_allowlist(allowed))
     if target_reason:
@@ -10568,17 +10619,6 @@ def _decide_rules(
             "command": command,
             "id": "core.control-plane-target",
             "unverifiable": True,
-        }
-
-    escape_reason = None if scripted else detect_escape_hatch(command)
-    if escape_reason:
-        return {
-            "decision": "allow",
-            "reason": f"Escape hatch: {escape_reason}",
-            "pattern": None,
-            "command": command,
-            "escape": True,
-            "escape_reason": escape_reason,
         }
 
     if is_enabled is False:
@@ -11097,7 +11137,7 @@ def check_mcp_tool(tool_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
 # and heredocs across lines. Other interpreters are reduced to the commands their process-spawning
 # calls carry (``_foreign_commands``) — string literals elsewhere are prose and are not judged.
 # Only what the ladder positively recognizes counts inside a script (``scripted``): no
-# ``# allow:`` escape, no ask for a substitution or computed verb. A script that cannot be read
+# ``# ask:`` comment, no ask for a substitution or computed verb. A script that cannot be read
 # when it must be (unreadable, too large, nested too deep, or produced by this very command from
 # a source nothing can read) is an unverifiable ask.
 #
@@ -11564,7 +11604,7 @@ def _program_protected_verdict(text: str, lang: str, config: Dict[str, Any]) -> 
 
 def _script_finding(inner: Dict[str, Any], label: str, authoring: bool = False) -> Optional[Dict[str, Any]]:
     """``inner`` (the verdict on a script's text) as a verdict on the command that runs it; None when nothing was found."""
-    if inner["decision"] == "allow" or inner.get("escape") or inner.get("disabled"):
+    if inner["decision"] == "allow" or inner.get("disabled"):
         return None
     if inner.get("unverifiable") and not inner.get("scriptscan"):
         return None

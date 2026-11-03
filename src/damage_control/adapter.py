@@ -79,7 +79,7 @@ def parse_args(argv: List[str]) -> Tuple[str, Optional[str]]:
 
 def hook_namespace() -> Any:
     """What ``Guard`` and ``render`` reach engine functions and audit writers through."""
-    names = {n: getattr(audit, n) for n in ("log_allowed", "log_asked", "log_blocked", "log_disabled", "log_escape")}
+    names = {n: getattr(audit, n) for n in ("log_allowed", "log_asked", "log_blocked", "log_disabled")}
     return types.SimpleNamespace(**{**vars(engine), **names})
 
 

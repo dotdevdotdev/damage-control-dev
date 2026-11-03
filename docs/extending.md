@@ -25,7 +25,7 @@ A profile only ever **adds**. The generic control plane (project `.damagecontrol
 | `control_plane_words` | Names a program might use to build a control-plane path at run time. |
 | `benign_path_patterns` | Regex alternatives for directories agents write by design (whole path segment). |
 | `home_alias` | Fixed stand-in for `$HOME` when judging what a `~` allowlist entry covers. |
-| `protected_commands` | `(regex, reason)` pairs for commands that must never run through an agent. No allowlist, escape comment or kill switch applies. |
+| `protected_commands` | `(regex, reason)` pairs for commands that must never run through an agent. No allowlist, `# ask:` comment or kill switch applies. |
 | `unattended_env`, `unattended_allow_env` | Env var names for unattended mode and per-run grants. Defaults `DAMAGE_CONTROL_UNATTENDED` and `DAMAGE_CONTROL_UNATTENDED_ALLOW`. |
 | `default_unattended_allow` | Rule ids granted to unattended runs by default. The engine ships none. |
 | `unattended_grant_hint` | First half of the sentence telling a blocked unattended run how to get a grant (`{rule_id}` is filled in). |
