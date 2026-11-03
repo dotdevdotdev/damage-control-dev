@@ -202,6 +202,7 @@ def log_entry(
     escape_reason: Optional[str] = None,
     cwd: Optional[str] = None,
     allowed_by: Optional[str] = None,
+    escalated_from: Optional[str] = None,
 ) -> None:
     """
     Write a log entry to the audit log.
@@ -209,12 +210,13 @@ def log_entry(
     Args:
         tool: Tool name (Bash, Edit, Write)
         command: Command or path that was checked
-        decision: "blocked", "asked", "allowed", "allowed_by_escape", or "allowed_by_disabled"
+        decision: "blocked", "asked", "allowed", or "allowed_by_disabled"
         blocked_by: Reason/pattern that triggered block
         user_approved: Whether user approved (for ask patterns)
         pattern_matched: The regex pattern that matched
         rule_id: Stable identifier of the matched rule (when applicable)
-        escape_reason: Reason supplied via "# allow:" escape hatch (when applicable)
+        escape_reason: The agent's reason from a "# ask:" comment (when applicable)
+        escalated_from: The verdict an agent-requested ask was raised from
         cwd: Working directory where the command would have run
         allowed_by: The user-owned allowlist entry that allowed a command a rule
             would otherwise block (e.g. ``delete-recursive: /repo/dist/*``)
@@ -241,6 +243,8 @@ def log_entry(
     }
     if allowed_by:
         entry["allowed_by"] = allowed_by
+    if escalated_from:
+        entry["escalated_from"] = escalated_from
 
     log_file = get_log_file()
 
@@ -276,23 +280,6 @@ def log_blocked(
     )
 
 
-def log_escape(
-    tool: str,
-    command: str,
-    escape_reason: str,
-) -> None:
-    """
-    Log a command that was allowed through the ``# allow: <reason>`` escape hatch.
-    """
-    log_entry(
-        tool=tool,
-        command=command,
-        decision="allowed_by_escape",
-        blocked_by=f"Escape hatch: {escape_reason}",
-        escape_reason=escape_reason,
-    )
-
-
 def log_disabled(
     tool: str,
     command: str,
@@ -313,6 +300,9 @@ def log_asked(
     command: str,
     reason: str,
     pattern: Optional[str] = None,
+    rule_id: Optional[str] = None,
+    escape_reason: Optional[str] = None,
+    escalated_from: Optional[str] = None,
 ) -> None:
     """
     Log an operation that requires user confirmation.
@@ -325,6 +315,9 @@ def log_asked(
         command: Command or path that requires confirmation
         reason: Human-readable reason for asking
         pattern: The regex pattern that matched
+        rule_id: Stable identifier of the matched rule (the original block's, when escalated)
+        escape_reason: The agent's reason from a ``# ask: <reason>`` comment
+        escalated_from: The verdict this ask was raised from (``block``), for an agent-requested exception
     """
     log_entry(
         tool=tool,
@@ -332,6 +325,9 @@ def log_asked(
         decision="asked",
         blocked_by=reason,
         pattern_matched=pattern,
+        rule_id=rule_id,
+        escape_reason=escape_reason,
+        escalated_from=escalated_from,
     )
 
 

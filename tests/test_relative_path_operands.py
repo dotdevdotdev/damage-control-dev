@@ -29,7 +29,7 @@ CASES = [
     (FAKE_HOME + "/.claude/hooks", "echo x > ../settings.json", "block"),
     (FAKE_HOME + "/project", "echo x > ../.claude/settings.json", "block"),
     (FAKE_HOME, "echo hi\necho x > .claude/settings.json", "block"),
-    (FAKE_HOME, "echo x > .claude/settings.json  # allow: because", "block"),
+    (FAKE_HOME, "echo x > .claude/settings.json  # ask: because", "block"),
     (FAKE_HOME + "/.damage-control", "echo x > damagecontrol.yml", "block"),
     (FAKE_HOME, "echo x > .damage-control/damagecontrol.yml", "block"),
     (ELSEWHERE, "cd ~ && echo x > .claude/settings.json", "block"),

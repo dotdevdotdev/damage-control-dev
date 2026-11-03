@@ -92,7 +92,7 @@ class Profile(NamedTuple):
     # Fixed stand-in for ``$HOME`` when judging what a ``~``-anchored entry covers.
     home_alias: str = "/home/damage-control-canonical"
 
-    # --- protected commands (additive; no allowlist, no escape hatch, no kill switch) ---
+    # --- protected commands (additive; no allowlist, no ``# ask:``, no kill switch) ---
     protected_commands: Tuple[Tuple[str, str], ...] = ()
 
     # --- unattended / headless --------------------------------------------

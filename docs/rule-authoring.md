@@ -229,11 +229,11 @@ How the keys behave:
 - **`enabled: false`** switches the rules off. The control plane stays protected (see the [threat model](threat-model.md#the-control-plane-and-the-kill-switch)). A missing, unreadable or unparseable policy file leaves `enabled` true.
 - **`disabled_rules`** skips those ids entirely. Verified: with `core.rsync-delete` disabled, `check "rsync --delete a b"` reports `allow`.
 - **`unattended_allow`** applies only when `DAMAGE_CONTROL_UNATTENDED=1` is set for the session. There, an `ask` becomes a block unless the rule's id is listed. The environment variable `DAMAGE_CONTROL_UNATTENDED_ALLOW` can add ids per run. Hard blocks are never granted. An unverifiable ask (for example `eval`) stays blocked unless its own id, such as `core.ambiguous-command`, is named. An entry can also be a mapping with `id:` and `paths:` to scope the grant to directories.
-- **Escape comment.** Ending a command with `# allow: <reason>` makes that one command allowed and records the reason in the audit log. A non-empty reason is required. It does not apply to the control plane. Because it is part of the command text, an agent can write it too, so treat it as an audit marker, not as authorization (see the [threat model](threat-model.md#what-it-does-not-protect-against)).
+- **Ask comment.** Ending a command with `# ask: <reason>` turns a verdict of `block` into an `ask` for that one command, and the human sees the reason. A non-empty reason is required, and the comment must be the last thing in the command: inside quotes, in the middle of a command or in the text of a script file it is a plain comment. A command that would be allowed is unchanged, and one that already asks still asks. The ask is not lowered by `bypassPermissions`, `auto` or `acceptEdits`, and an unattended session blocks it even when `unattended_allow` names the rule. The control plane ignores the comment. The audit row records the reason, the original rule id and that the verdict was raised from `block` (see the [threat model](threat-model.md#what-it-does-not-protect-against)). `# allow:` has no effect.
 
 ```
-$ damage-control-dev check "rm -rf /tmp/x # allow: scratch dir"
-allow: Escape hatch: scratch dir
+$ damage-control-dev check "rm -rf /tmp/x # ask: scratch dir"
+ask: The agent asked for an exception to this block (rm with recursive or force flags) — its reason: scratch dir [core.rm-with-recursive-or-force-flags]
 ```
 
 ## Groups and packs
@@ -323,12 +323,12 @@ block: rm file deletion (use git clean or manual cleanup) [core.rm-file-deletion
 
 For a shell command, roughly:
 
-1. Control-plane and protected-command checks. These run first and ignore the escape comment and the kill switch.
+1. Control-plane and protected-command checks. These run first and ignore the ask comment and the kill switch.
 2. Command rules that block (`ask` absent). Not bypassable.
 3. Command rules with `ask: true`. A block found anywhere outranks them.
 4. `bypassable` rules, which pass if the allowlist covers every operand.
 5. Path lists: `allowedPaths` first, then `zeroAccessPaths`, `readOnlyPaths`, `noDeletePaths`.
-6. Commands hidden in the command (payloads of `sh -c`, `ssh`, and the like) and the files it runs, each judged by steps 1 to 5. The text of a file it runs is judged without the escape comment and without the ask for a computed verb or a substitution; see [script indirection](threat-model.md#script-indirection).
+6. Commands hidden in the command (payloads of `sh -c`, `ssh`, and the like) and the files it runs, each judged by steps 1 to 5. The text of a file it runs is judged without the ask comment and without the ask for a computed verb or a substitution; see [script indirection](threat-model.md#script-indirection).
 
 What an `ask` does next depends on mode: a prompt for a human, allowed under bypass mode (unless unverifiable), blocked when unattended unless granted. See [How a decision is made](threat-model.md#how-a-decision-is-made).
 
