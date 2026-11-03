@@ -36,6 +36,14 @@ CASES = [
     # a bare directory entry (no-delete class) used from inside the directory
     (PROJECT + "/.git", "unlink HEAD", "block"),
     (PROJECT + "/.github/workflows", "unlink ci.yml", "block"),
+    # build output is written by builds: writable from inside and outside the project
+    (PROJECT, "echo x > dist/a.whl", "allow"),
+    (PROJECT, "cp a.tar.gz dist/", "allow"),
+    (PROJECT + "/dist", "rm a.whl", "allow"),
+    ("/tmp", "echo x > " + PROJECT + "/build/lib/a.py", "allow"),
+    (PROJECT, "echo x > .next/cache/a", "allow"),
+    # ...while a dependency directory stays read-only
+    (PROJECT, "echo x > node_modules/a/index.js", "block"),
     # control: the same names somewhere they mean nothing
     (ELSEWHERE, "echo x > .zshenv", "allow"),
     (ELSEWHERE, "cat .config/gh/hosts.yml", "allow"),

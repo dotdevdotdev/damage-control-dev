@@ -341,14 +341,10 @@ readOnlyPaths:
   - "*.chunk.js"
 
   # ---------------------------------------------------------------------------
-  # BUILD ARTIFACTS - Generated directories, don't edit
+  # DEPENDENCY AND ENVIRONMENT DIRECTORIES - Generated, don't edit
+  # (build output such as dist/ and build/ is writable: builds write there,
+  # see allowedPaths)
   # ---------------------------------------------------------------------------
-  - dist/
-  - build/
-  - out/
-  - .next/
-  - .nuxt/
-  - .output/
   - node_modules/
   - __pycache__/
   - .venv/
