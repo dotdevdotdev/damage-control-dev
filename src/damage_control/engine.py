@@ -25,6 +25,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from damage_control import audit, scriptfile
@@ -6152,15 +6153,52 @@ def _alias_target_now(path: str) -> Optional[str]:
     try:
         if "/" not in path and not os.path.lexists(path):
             return None
-        real = os.path.realpath(path)
+        real, st = _resolve(path)
         if real != posixpath.normpath(os.path.abspath(path)) and _under_protected(real):
             return real
-        if os.path.isfile(path) and os.stat(path).st_nlink > 1:
-            st = os.stat(path)
+        if st is not None and S_ISREG(st.st_mode) and st.st_nlink > 1:
             return next((p for p, ps in _protected_inodes(os.path.expanduser("~")) if os.path.samestat(st, ps)), None)
     except (OSError, ValueError):
         pass
     return None
+
+
+def _resolve(path: str) -> Tuple[str, Optional["os.stat_result"]]:
+    """``(os.path.realpath(path), os.stat of that, or None when nothing is there)``, asking the filesystem once per directory.
+
+    ``realpath`` walks every component of every path it is given, so a script naming a few dozen
+    files under one directory asks about that directory a few dozen times; on a network or
+    automounted prefix each ask costs tens of milliseconds. Here a directory is resolved once per
+    decision, a path under a directory that is not there is not looked up at all, and one ``lstat``
+    answers both "is it a link" and "how many links does it have".
+    """
+    return _remembered(("resolve", path), lambda: _resolve_now(path))
+
+
+def _resolve_now(path: str) -> Tuple[str, Optional["os.stat_result"]]:
+    parent, base = posixpath.split(path)
+    if not (path.startswith("/") and parent and base and posixpath.normpath(path) == path):
+        real = os.path.realpath(path)
+        return real, _stat_or_none(real)
+    real_parent, parent_st = _resolve(parent)
+    candidate = posixpath.join(real_parent, base)
+    if parent_st is None or not S_ISDIR(parent_st.st_mode):
+        return candidate, None
+    try:
+        lst = os.lstat(candidate)
+    except OSError:
+        return candidate, None
+    if not S_ISLNK(lst.st_mode):
+        return candidate, lst
+    real = os.path.realpath(candidate)
+    return real, _stat_or_none(real)
+
+
+def _stat_or_none(path: str) -> Optional["os.stat_result"]:
+    try:
+        return os.stat(path)
+    except (OSError, ValueError):
+        return None
 
 
 def _alias_variants(rest: str, cwd: str) -> List[str]:
