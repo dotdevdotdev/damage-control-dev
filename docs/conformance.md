@@ -17,12 +17,12 @@ source says *control* is the same spelling on a harmless command: it must stay a
 | [quote-splitting](#quote-splitting) | 9 | A word split or wrapped by quotes that the shell removes before running it. |
 | [backslashes](#backslashes) | 6 | A backslash the shell removes inside a word. |
 | [separator-variable](#separator-variable) | 8 | The shell's field separator variable used where a space would go. |
-| [computed-verb](#computed-verb) | 5 | The command word produced by a substitution or a variable. |
+| [computed-verb](#computed-verb) | 10 | The command word produced by a substitution or a variable. |
 | [encoded-payload](#encoded-payload) | 13 | A decoded program piped into a shell. |
 | [alternative-utility](#alternative-utility) | 9 | A different utility or interpreter one-liner with the same effect. |
 | [path-spelling](#path-spelling) | 22 | One protected path written relative, with ~, with a variable or in a brace group. |
 | [script-indirection](#script-indirection) | 8 | The operation held in a file the command runs. |
-| **Total** | 80 | |
+| **Total** | 85 | |
 
 ## quote-splitting
 
@@ -79,6 +79,11 @@ The command word produced by a substitution or a variable.
 | `x=rm; $x -rf /` | `/tmp` | block | GuardFall: variable as the verb |
 | `"$(printf rm)" -rf /` | `/tmp` | ask | GuardFall: substitution as the verb |
 | `x=ls; $x -la` | `/tmp` | allow | control: a variable verb that resolves to a harmless command |
+| `$u rm -rf /` | `/tmp` | block | GuardFall: unset variable as the verb (empty, the next word runs) |
+| `"$u" rm -rf /` | `/tmp` | block | GuardFall: unset variable as the verb (empty, the next word runs) |
+| `$u ls` | `/tmp` | ask | GuardFall: unset variable as the verb (value unknown) |
+| `ls $u` | `/tmp` | allow | control: an unset variable as an operand, not the verb |
+| `f=echo; $f hi` | `/tmp` | allow | control: a variable the command sets |
 
 ## encoded-payload
 

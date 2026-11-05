@@ -5027,7 +5027,8 @@ _IND_EXPANSION_RE = re.compile(
     r"\$(?:\{([A-Za-z_]\w*|\d+|[@*])(?:\[([^\]]*)\])?([:#%/@^,!+\-=?][^}]*)?\}|([A-Za-z_]\w*)|(\d|[@*]))"
 )
 _IND_PURE_HEAD_RE = re.compile(r"""^["']?\$(?:\{[^}]*\}|\w+|[@*#?!$-])["']?(?:/.*)?$""")
-_IND_POSITIONAL_RE = re.compile(r"(\")?\$(?:\{(\d+|[@*#])\}|(\d|[@*#]))(?(1)\")")
+_IND_BARE_VARIABLE_RE = re.compile(r"""^["']?\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*)["']?$""")
+_IND_POSITIONAL_RE =re.compile(r"(\")?\$(?:\{(\d+|[@*#])\}|(\d|[@*#]))(?(1)\")")
 _IND_SAFE_WORD_RE = re.compile(r"^[\w@%+=:,./~$*?\[\]{}^-]+$")
 _IND_CANDIDATE_CAP = 16
 # a construct that hands text to a shell: only there does a defined variable change what RUNS
@@ -5361,6 +5362,8 @@ def _ind_function_call(body: str, args: List[str]) -> str:
 
 def _ind_head_unresolved(text: str, guarded: bool) -> Optional[Tuple[str, bool]]:
     """Why an expansion head this command does not define is worth an ask, or None when it is an environment name."""
+    if _IND_BARE_VARIABLE_RE.match(text):
+        return ("a verb taken from a variable the command does not set", True)
     if _IND_PURE_HEAD_RE.match(text):
         why = None
     else:
@@ -5432,6 +5435,10 @@ def _indirect_verbs(command: str, guarded: bool = False, _depth: int = 0, _outer
                 resolved.append(env.preamble(rebuilt) + rebuilt)
             elif why is None:
                 why = _ind_head_unresolved(value, guarded)
+                if _IND_BARE_VARIABLE_RE.match(value) and len(toks) > head + 1:
+                    # empty, the expansion vanishes and the next word is the verb
+                    dropped = _ind_rebuild(toks, head, [])
+                    resolved.append(env.preamble(dropped) + dropped)
         if why is not None and unresolved is None:
             unresolved = why
     if _IND_FED_RE.search(command):
