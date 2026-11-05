@@ -21,10 +21,10 @@ source says *control* is the same spelling on a harmless command: it must stay a
 | [encoded-payload](#encoded-payload) | 13 | A decoded program piped into a shell. |
 | [alternative-utility](#alternative-utility) | 9 | A different utility or interpreter one-liner with the same effect. |
 | [path-spelling](#path-spelling) | 32 | One protected path written relative, with ~, with a variable or in a brace group. |
-| [script-indirection](#script-indirection) | 10 | The operation held in a file the command runs. |
-| [data-operand](#data-operand) | 10 | Text a file holds, where the command only names the file as an argument and does not run it. |
+| [script-indirection](#script-indirection) | 20 | The operation held in a file the command runs. |
+| [data-operand](#data-operand) | 13 | Text a file holds, where the command only names the file as an argument and does not run it. |
 | [quoted-text](#quoted-text) | 7 | A protected path written inside text a command only prints, sends or writes, against the same text where the command opens it. |
-| **Total** | 117 | |
+| **Total** | 130 | |
 
 ## quote-splitting
 
@@ -181,6 +181,16 @@ The operation held in a file the command runs.
 | `bash clean.sh` | `@ROOT@` | allow | control: a script that holds nothing guarded |
 | `pyt""hon3 bad.py` | `@ROOT@` | block | interpreter name split by a quote pair |
 | `py\thon3 bad.py` | `@ROOT@` | block | interpreter name split by a backslash |
+| `python3 -Wignore::DeprecationWarning bad.py` | `@ROOT@` | block | option grammar: a cluster whose value holds an inline-program letter |
+| `python3 -BWerror::ResourceWarning bad.py` | `@ROOT@` | block | option grammar: a cluster whose value holds an inline-program letter |
+| `perl -Ilib -MCarp data.yaml` | `@ROOT@` | block | option grammar: options that take a value |
+| `uvx --with requests python3 bad.py` | `@ROOT@` | block | option grammar: a launcher's option argument |
+| `npx --package somepkg node data.yaml` | `@ROOT@` | block | option grammar: a launcher's option argument |
+| `pipx run --spec somepkg python3 bad.py` | `@ROOT@` | block | option grammar: a launcher's option argument |
+| `poetry run --directory . python3 bad.py` | `@ROOT@` | block | option grammar: a launcher's option argument |
+| `timeout 1.5 python3 bad.py` | `@ROOT@` | block | option grammar: a launcher's option argument |
+| `env -u SOMEVAR python3 bad.py` | `@ROOT@` | block | option grammar: a launcher's option argument |
+| `uvx --with requests python3 plain.yaml` | `@ROOT@` | allow | control: a script that holds nothing guarded |
 
 ## data-operand
 
@@ -198,6 +208,9 @@ Text a file holds, where the command only names the file as an argument and does
 | `bash data.yaml` | `@ROOT@` | block | control: the same file run as a script |
 | `python3 data.yaml` | `@ROOT@` | block | control: the same file run as a script |
 | `bash plain.yaml` | `@ROOT@` | allow | control: a script that holds nothing guarded |
+| `python3 -Bc 'print(1)' data.yaml` | `@ROOT@` | allow | option grammar: a cluster that carries the program |
+| `perl -lne 'print' data.yaml` | `@ROOT@` | allow | option grammar: a cluster that carries the program |
+| `ruby -ne 'puts' data.yaml` | `@ROOT@` | allow | option grammar: a cluster that carries the program |
 
 ## quoted-text
 

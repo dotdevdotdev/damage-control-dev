@@ -135,7 +135,6 @@
     {"id": "data-operand-08", "class": "data-operand", "command": "bash data.yaml", "cwd": "@ROOT@", "verdict": "block", "source": "control: the same file run as a script"},
     {"id": "data-operand-09", "class": "data-operand", "command": "python3 data.yaml", "cwd": "@ROOT@", "verdict": "block", "source": "control: the same file run as a script"},
     {"id": "data-operand-10", "class": "data-operand", "command": "bash plain.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "control: a script that holds nothing guarded"},
-
     {"id": "quoted-text-01", "class": "quoted-text", "command": "echo \"notes mention ~/.ssh/id_rsa\"", "cwd": "@HOME@", "verdict": "allow", "source": "control: a path named in text echo only prints"},
     {"id": "quoted-text-02", "class": "quoted-text", "command": "printf '%s\\n' 'see ~/.ssh/id_rsa notes'", "cwd": "@HOME@", "verdict": "allow", "source": "control: a path named in text printf only prints"},
     {"id": "quoted-text-03", "class": "quoted-text", "command": "cat > /tmp/dc-notes.md <<'EOF'\nthe file ~/.ssh/id_rsa is guarded\nEOF", "cwd": "@HOME@", "verdict": "allow", "source": "control: a path named in a heredoc body written to a file"},
@@ -144,6 +143,19 @@
     {"id": "quoted-text-06", "class": "quoted-text", "command": "cat > ~/.ssh/authorized_keys <<'EOF'\nkey\nEOF", "cwd": "@HOME@", "verdict": "block", "source": "project history: the file a heredoc body is written to"},
     {"id": "quoted-text-07", "class": "quoted-text", "command": "bash <<'EOF'\ncat ~/.ssh/id_rsa\nEOF", "cwd": "@HOME@", "verdict": "block", "source": "project history: a heredoc body a shell runs"},
     {"id": "script-indirection-09", "class": "script-indirection", "command": "pyt\"\"hon3 bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "interpreter name split by a quote pair"},
-    {"id": "script-indirection-10", "class": "script-indirection", "command": "py\\thon3 bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "interpreter name split by a backslash"}
+    {"id": "script-indirection-10", "class": "script-indirection", "command": "py\\thon3 bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "interpreter name split by a backslash"},
+    {"id": "script-indirection-11", "class": "script-indirection", "command": "python3 -Wignore::DeprecationWarning bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "option grammar: a cluster whose value holds an inline-program letter"},
+    {"id": "script-indirection-12", "class": "script-indirection", "command": "python3 -BWerror::ResourceWarning bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "option grammar: a cluster whose value holds an inline-program letter"},
+    {"id": "script-indirection-13", "class": "script-indirection", "command": "perl -Ilib -MCarp data.yaml", "cwd": "@ROOT@", "verdict": "block", "source": "option grammar: options that take a value"},
+    {"id": "script-indirection-14", "class": "script-indirection", "command": "uvx --with requests python3 bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "option grammar: a launcher's option argument"},
+    {"id": "script-indirection-15", "class": "script-indirection", "command": "npx --package somepkg node data.yaml", "cwd": "@ROOT@", "verdict": "block", "source": "option grammar: a launcher's option argument"},
+    {"id": "script-indirection-16", "class": "script-indirection", "command": "pipx run --spec somepkg python3 bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "option grammar: a launcher's option argument"},
+    {"id": "script-indirection-17", "class": "script-indirection", "command": "poetry run --directory . python3 bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "option grammar: a launcher's option argument"},
+    {"id": "script-indirection-18", "class": "script-indirection", "command": "timeout 1.5 python3 bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "option grammar: a launcher's option argument"},
+    {"id": "script-indirection-19", "class": "script-indirection", "command": "env -u SOMEVAR python3 bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "option grammar: a launcher's option argument"},
+    {"id": "script-indirection-20", "class": "script-indirection", "command": "uvx --with requests python3 plain.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "control: a script that holds nothing guarded"},
+    {"id": "data-operand-11", "class": "data-operand", "command": "python3 -Bc 'print(1)' data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "option grammar: a cluster that carries the program"},
+    {"id": "data-operand-12", "class": "data-operand", "command": "perl -lne 'print' data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "option grammar: a cluster that carries the program"},
+    {"id": "data-operand-13", "class": "data-operand", "command": "ruby -ne 'puts' data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "option grammar: a cluster that carries the program"}
   ]
 }

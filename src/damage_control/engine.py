@@ -28,7 +28,7 @@ from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple, Union
 
-from damage_control import audit, data_operands, explain, nonexec, recipefile, scriptfile, shellexpand
+from damage_control import audit, data_operands, explain, nonexec, optiongrammar, recipefile, scriptfile, shellexpand
 from damage_control.profile import GENERIC
 
 
@@ -5987,8 +5987,9 @@ _WRAPPER_VALUE_OPTS = {
     "time": {"-f", "-o", "--format", "--output"},
     "parallel": {"-j", "-n", "-N", "-S", "-a", "--jobs", "--sshlogin", "-I"},
     "sshpass": {"-p", "-f", "-d", "-P"},
+    **optiongrammar.LAUNCHER_VALUE_OPTS,
 }
-_POSITIONAL_ARG = _rx(r"\d+[smhd]?|0[xX][0-9a-fA-F]+")
+_POSITIONAL_ARG = _rx(r"\d+(?:\.\d+)?[smhd]?|0[xX][0-9a-fA-F]+")
 
 
 def _wrapped_command_index(words: List[str]) -> Optional[int]:
@@ -6006,7 +6007,8 @@ def _wrapped_command_index(words: List[str]) -> Optional[int]:
         if skip_value:
             skip_value = False
         elif os.path.basename(w) in wrappers:
-            current = os.path.basename(w)
+            if not (w in optiongrammar.LAUNCHER_SUBCOMMANDS and current in optiongrammar.LAUNCHER_VALUE_OPTS):
+                current = os.path.basename(w)  # ``uv run --with x``: ``run`` keeps ``uv``'s options
         elif _ASSIGN_TOKEN_RE.match(w) or _POSITIONAL_ARG.fullmatch(w):
             continue
         elif w.startswith("-"):
@@ -9294,7 +9296,7 @@ _POSITION_WRAPPERS = _WRAPPER_PREFIXES | _PREFIX_WRAPPERS | {
     # two-token launchers (``uv run <tool>``, ``npm exec <tool>``): both halves
     # keep the chain open; the worst case is an extra allowed START, never a
     # missed one.
-    "uv", "npm", "pnpm", "yarn", "bun", "bundle", "run", "exec", "dlx",
+    "uv", "npm", "pnpm", "yarn", "bun", "bundle", "run", "exec", "dlx", "poetry",
 }
 
 
@@ -11268,13 +11270,6 @@ _SCRIPT_RUN_HINT = re.compile(
 _SCRIPT_UNSAFE_PATH = re.compile(r"[$`*?\[{\x00]")
 _REDIRECT_OUT_RE = re.compile(r"^(?:\d+|&)?(>>?\|?)(.*)$")
 _HEREDOC_OPENER_RE = re.compile(r"^\d*<<(?!<)")
-_INTERPRETER_OPTIONS = {  # language -> (flags that make the program text inline, flags taking a separate value)
-    "python": (frozenset({"-c", "-m"}), frozenset({"-W", "-X", "-Q"})),
-    "node": (frozenset({"-e", "--eval", "-p", "--print"}),
-             frozenset({"-r", "--require", "--import", "--loader", "--experimental-loader", "--conditions", "-C"})),
-    "perl": (frozenset({"-e", "-E"}), frozenset({"-I", "-M", "-m"})),
-    "ruby": (frozenset({"-e"}), frozenset({"-r", "-I", "-C", "-E"})),
-}
 _ESCAPE_RE = re.compile(r"\\(n|t|r|\\|'|\"|x[0-9a-fA-F]{2})")
 _ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", "'": "'", '"': '"'}
 _PRINTF_SPEC_RE = re.compile(r"%(?:%|[-+ #0-9.]*[sbdiouxXcq])")
@@ -11372,29 +11367,6 @@ def _shell_script_operand(args: List[str]) -> Optional[str]:
     return None
 
 
-def _interpreter_script_operand(lang: str, args: List[str]) -> Optional[str]:
-    """The script file ``python|node|perl|ruby`` is run on, or None when the program is inline / a module / stdin."""
-    inline, takes_value = _INTERPRETER_OPTIONS[lang]
-    i = 0
-    while i < len(args):
-        w = args[i]
-        if w == "--":
-            return args[i + 1] if i + 1 < len(args) else None
-        if w == "-":
-            return None
-        if w in inline or nonexec.runs_no_program(lang, w):
-            return None
-        if w in takes_value:
-            i += 2
-        elif w.startswith("-"):
-            if not w.startswith("--") and any(f"-{ch}" in inline for ch in w[1:]):
-                return None  # ``-Bc`` / ``-ne``: a cluster that carries an inline program
-            i += 1
-        else:
-            return w
-    return None
-
-
 def _source_operand(args: List[str]) -> Optional[str]:
     for w in args:
         if w == "--" or w.startswith("-"):
@@ -11414,7 +11386,7 @@ def _exec_operand(head: str, args: List[str]) -> Optional[Tuple[str, Optional[st
         return (operand, "shell") if operand else None
     lang = scriptfile.language_of(base)
     if lang and lang != "shell":
-        operand = _interpreter_script_operand(lang, args)
+        operand = optiongrammar.script_operand(lang, args)
         return (operand, lang) if operand else None
     if "/" in head and not head.endswith("/"):
         return head, None
