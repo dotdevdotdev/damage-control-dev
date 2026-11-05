@@ -4634,7 +4634,7 @@ def _segment_raw_words(command: str) -> List[List[str]]:
 @functools.lru_cache(maxsize=256)
 def _segment_raw_words_of(command: str) -> Tuple[Tuple[str, ...], ...]:
     command = _strip_heredoc_bodies(command)
-    assigns = {m.group(1): m.group(2).strip("'\"") for m in _ASSIGN_RE.finditer(command)}
+    assigns = shellexpand.resolve_assignment_chain({m.group(1): m.group(2).strip("'\"") for m in _ASSIGN_RE.finditer(command)})
     out: List[Tuple[str, ...]] = []
     for toks in _scan_masked_tokens(command):
         words: List[str] = []
@@ -7913,6 +7913,7 @@ def normalize_subcommands(command: str) -> Tuple[List[str], Optional[str]]:
     assigns: Dict[str, str] = {}
     for m in _ASSIGN_RE.finditer(command):
         assigns[m.group(1)] = m.group(2).strip("'\"")
+    assigns = shellexpand.resolve_assignment_chain(assigns)
 
     try:
         lex = shlex.shlex(command, posix=True, punctuation_chars=True)
@@ -9074,6 +9075,7 @@ def _resolved_token_stage(command: str) -> Tuple[Tuple[Tuple[str, bool, bool], .
     assigns: Dict[str, str] = {}
     for m in _ASSIGN_RE.finditer(command):
         assigns[m.group(1)] = m.group(2).strip("'\"")
+    assigns = shellexpand.resolve_assignment_chain(assigns)
 
     def _resolve(tok: str) -> str:
         for name, val in assigns.items():
@@ -11423,7 +11425,9 @@ def _candidate_paths(operand: str, bases: List[str]) -> Tuple[str, ...]:
 
 def _script_refs(command: str, cwd: Optional[str], _depth: int = 0) -> List[Union[_ScriptRef, "recipefile.Run"]]:
     """Every file ``command`` runs, in order, with what the same command writes to it first; and every task runner it starts."""
-    if not _SCRIPT_RUN_HINT.search(command):
+    if not _SCRIPT_RUN_HINT.search(command) and not any(
+        _SCRIPT_RUN_HINT.search(w) for words in _segment_raw_words(command) for w in words
+    ):  # ``pyt""hon3``: the hint is read off the words the shell forms, not the text typed
         return []
     payload_cwd = posixpath.normpath(cwd) if cwd and os.path.isabs(cwd) else None
     tracked: Optional[str] = payload_cwd
