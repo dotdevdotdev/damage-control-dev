@@ -4,6 +4,7 @@ How rules, tooldefs, groups, packs and the policy file fit together, and how to 
 
 - [Where things live](#where-things-live)
 - [Try a rule: `check` and `rules`](#try-a-rule-check-and-rules)
+- [See how a command was judged: `explain`](#see-how-a-command-was-judged-explain)
 - [Writing a rule](#writing-a-rule)
 - [Anchored or not](#anchored-or-not)
 - [Path lists](#path-lists)
@@ -61,6 +62,23 @@ block core.sudo-rm  (core)
 $ echo '{"tool_name":"Read","tool_input":{"file_path":"/tmp/server.pem"},"cwd":"/tmp"}' | python -I -m damage_control.hook read
 SECURITY: Blocked read of zero-access path *.pem (no read access): /tmp/server.pem
 ```
+
+## See how a command was judged: `explain`
+
+`check` gives a verdict and a rule id. `damage-control-dev explain "<command>" [--cwd D] [--mode default|bypass] [--json]` shows how the verdict was reached. It runs the same decision the hook runs and reports what that run did; it does not judge a second time. Like `check`, it always exits 0.
+
+The report has these parts:
+
+| Part | Shows |
+|---|---|
+| Words | The typed words, the text after `$IFS` expansion, and each normalized subcommand the rules read. |
+| Files read | Each script or recipe file the scan opened, its status, and its size against the per-file, file-count, total and depth limits. |
+| Judged | Each text the rules ran on (the command, a command hidden in it, a chunk of a script), how many rules were consulted, and which matched. |
+| Verdict | The decision, the rule that decided with its tier and source, the reason and pattern, and whether the permission mode lowered an ask or an unattended run refused it. |
+| `# ask:` | When the command ends in an `# ask:` comment, whether it turned a block into an ask. |
+| In effect | The profile, mode, whether a human is present, the kill switch, the rules loaded, and the packs and groups that are on. |
+
+A rule listed as matched is not always the one that decided: exemptions and grants can follow a match, so read the Verdict part for the decider.
 
 ## Writing a rule
 

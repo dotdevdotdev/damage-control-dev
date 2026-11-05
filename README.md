@@ -25,6 +25,7 @@ Supports **Claude Code on macOS and Linux**, Python 3.9 or newer. Nothing else i
 
 ```
 damage-control-dev check "git push --force origin main"   # what would the hooks decide?
+damage-control-dev explain "git push --force origin main"  # how it was judged: words, files read, rules, mode
 damage-control-dev rules                                   # list enforced rule ids
 damage-control-dev packs                                   # list packs; enabling is human-terminal only
 damage-control-dev doctor --fix                            # self-test and repair
