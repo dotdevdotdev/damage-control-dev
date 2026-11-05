@@ -176,6 +176,7 @@ Shell is hard to analyze statically. The engine does not execute or parse a full
 - **Wrappers and payloads:** `sudo`, `env`, `timeout`, `nohup`, `sh -c "…"`, `ssh host "…"`, `psql -c "…"`, `xargs`, `find -exec`, heredocs and here-strings fed to a shell. The wrapped text is judged as a command in its own right.
 - **Hidden-command carriers:** options that run programs, such as `tar --to-command`, `git -c core.sshCommand=…`, `git rebase --exec`, `ssh -o ProxyCommand=…`, `sed` `e`, and `awk` programs that call `system()`.
 - **Verbs the shell computes:** `x=ev; $x"al" …` is resolved from definitions in the same command (variables, arrays, aliases, functions, `for` lists) and judged as typed.
+- **The separator variable:** `cat${IFS}file`, `cat$IFS$9file` and `cat${IFS:0:1}file` run `cat file`, so they get the verdict of the spaced command, in the verb and operand positions and inside a `-c` or `ssh` payload. The shell's default separator list is assumed. A command that reassigns or unsets `IFS`, or transforms it (`${IFS#?}`), is an unverifiable ask; inside a script that is not asked about.
 - **Fetched programs:** a download piped into a shell (`curl … | sh`, `bash <(curl …)`) is blocked with id `core.fetched-program-pipe`. A non-download producer piped into a shell is an unverifiable ask.
 
 What it cannot decide asks rather than guesses: `eval`, base64-to-shell pipelines, a substitution that picks the command, a variable filled at run time. Such an ask carries id `core.ambiguous-command` or `core.indirect-verb`.
