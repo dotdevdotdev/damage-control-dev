@@ -47,6 +47,11 @@
     {"id": "computed-verb-04", "class": "computed-verb", "command": "\"$(printf rm)\" -rf /", "cwd": "/tmp", "verdict": "ask", "source": "GuardFall: substitution as the verb"},
 
     {"id": "computed-verb-05", "class": "computed-verb", "command": "x=ls; $x -la", "cwd": "/tmp", "verdict": "allow", "source": "control: a variable verb that resolves to a harmless command"},
+    {"id": "computed-verb-06", "class": "computed-verb", "command": "$u rm -rf /", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: unset variable as the verb (empty, the next word runs)"},
+    {"id": "computed-verb-07", "class": "computed-verb", "command": "\"$u\" rm -rf /", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: unset variable as the verb (empty, the next word runs)"},
+    {"id": "computed-verb-08", "class": "computed-verb", "command": "$u ls", "cwd": "/tmp", "verdict": "ask", "source": "GuardFall: unset variable as the verb (value unknown)"},
+    {"id": "computed-verb-09", "class": "computed-verb", "command": "ls $u", "cwd": "/tmp", "verdict": "allow", "source": "control: an unset variable as an operand, not the verb"},
+    {"id": "computed-verb-10", "class": "computed-verb", "command": "f=echo; $f hi", "cwd": "/tmp", "verdict": "allow", "source": "control: a variable the command sets"},
 
     {"id": "encoded-payload-01", "class": "encoded-payload", "command": "echo cm0gLXJmIC8= | base64 -d | sh", "cwd": "/tmp", "verdict": "ask", "source": "GuardFall: encoded payload"},
     {"id": "encoded-payload-02", "class": "encoded-payload", "command": "echo cm0gLXJmIC8= | base64 --decode | bash", "cwd": "/tmp", "verdict": "ask", "source": "GuardFall: encoded payload"},
