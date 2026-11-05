@@ -20,9 +20,9 @@ source says *control* is the same spelling on a harmless command: it must stay a
 | [computed-verb](#computed-verb) | 5 | The command word produced by a substitution or a variable. |
 | [encoded-payload](#encoded-payload) | 4 | A decoded program piped into a shell. |
 | [alternative-utility](#alternative-utility) | 9 | A different utility or interpreter one-liner with the same effect. |
-| [path-spelling](#path-spelling) | 10 | One protected path written relative, with ~, with a variable or in a brace group. |
+| [path-spelling](#path-spelling) | 22 | One protected path written relative, with ~, with a variable or in a brace group. |
 | [script-indirection](#script-indirection) | 8 | The operation held in a file the command runs. |
-| **Total** | 59 | |
+| **Total** | 71 | |
 
 ## quote-splitting
 
@@ -123,6 +123,18 @@ One protected path written relative, with ~, with a variable or in a brace group
 | `cat id_rsa` | `@HOME@/.ssh` | block | project history: relative operands |
 | `cat $HOME/.ssh/id_rsa` | `/tmp` | block | project history: path spellings |
 | `echo x > .zshenv` | `/tmp` | allow | control: same name outside the home directory |
+| `echo x > ~/./.zshenv` | `/tmp` | block | dot segments: a . segment after ~ |
+| `echo x > $HOME/./.zshenv` | `/tmp` | block | dot segments: a . segment after $HOME |
+| `echo x > @HOME@/x/../.zshenv` | `/tmp` | block | dot segments: a .. segment in an absolute path |
+| `echo x > ~//.zshenv` | `/tmp` | block | dot segments: repeated slashes |
+| `echo x > ~/.zshenv/` | `/tmp` | block | dot segments: trailing slash |
+| `echo x > {~/./.zshenv,/tmp/zz}` | `/tmp` | block | dot segments: brace group |
+| `cat ~/x/../.ssh/id_rsa` | `/tmp` | block | dot segments: a .. segment after ~ |
+| `cat ../x/../.ssh/id_rsa` | `@HOME@/project` | block | dot segments: .. segments from a subdirectory |
+| `d=$HOME/x/..; cat $d/.ssh/id_rsa` | `/tmp` | block | dot segments: variable-held directory |
+| `git -C ~/./.ssh show HEAD:id_rsa` | `/tmp` | block | dot segments: -C option value |
+| `rm ~/./.claude/notes.txt` | `/tmp` | block | dot segments: no-delete directory |
+| `echo x > ~/x/../notes.txt` | `/tmp` | allow | control: dot segments naming an unprotected file |
 
 ## script-indirection
 
