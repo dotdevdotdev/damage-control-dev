@@ -202,6 +202,10 @@ def _reference_haystacks(command, path):
     out = []
     for text in spellings:
         out += [h for h in engine.masked_subcommands(engine.mask_sed_substitutions(text), keep=keep) if h not in out]
+    for hay in list(out):
+        folded = engine.canonicalize_command(hay)
+        if folded not in out:
+            out.append(folded)
     return out
 
 

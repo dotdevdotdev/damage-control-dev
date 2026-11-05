@@ -109,6 +109,13 @@
     {"id": "path-spelling-24", "class": "path-spelling", "command": "hh=$HOME; d=$hh/x/..; cat $d/.ssh/id_rsa", "cwd": "/tmp", "verdict": "block", "source": "variable built from another variable: dot segment"},
     {"id": "path-spelling-25", "class": "path-spelling", "command": "hh=$HOME; d=${hh}/x/..; cat $d/.ssh/id_rsa", "cwd": "/tmp", "verdict": "block", "source": "variable built from another variable: braced reference"},
     {"id": "path-spelling-26", "class": "path-spelling", "command": "h=$HOME; d=$h/x; cat $d/.ssh/id_rsa", "cwd": "/tmp", "verdict": "allow", "source": "control: a variable built from another names a file below an unprotected directory"},
+    {"id": "path-spelling-27", "class": "path-spelling", "command": "echo x > ~/./.\"\"zshenv", "cwd": "/tmp", "verdict": "block", "source": "dot segments: quote split inside the protected name"},
+    {"id": "path-spelling-28", "class": "path-spelling", "command": "echo x > ~//.\\zshenv", "cwd": "/tmp", "verdict": "block", "source": "repeated slash: backslash inside the protected name"},
+    {"id": "path-spelling-29", "class": "path-spelling", "command": "rm ~/\"\"./.claude/notes.txt", "cwd": "/tmp", "verdict": "block", "source": "dot segments: quote split inside a no-delete directory"},
+    {"id": "path-spelling-30", "class": "path-spelling", "command": "hh=~; echo x > ${hh}//.zshenv", "cwd": "/tmp", "verdict": "block", "source": "repeated slash after a braced variable reference"},
+    {"id": "path-spelling-31", "class": "path-spelling", "command": "hh=@HOME@; echo x > {${hh}/.zshenv,/tmp/zz}", "cwd": "/tmp", "verdict": "block", "source": "braced variable reference inside a brace group"},
+    {"id": "path-spelling-32", "class": "path-spelling", "command": "hh=~; echo x > {${hh}/./.zshenv,/tmp/zz}", "cwd": "/tmp", "verdict": "block", "source": "braced variable reference and dot segment inside a brace group"},
+    {"id": "path-spelling-33", "class": "path-spelling", "command": "hh=~; echo x > ${hh}//notes.txt", "cwd": "/tmp", "verdict": "allow", "source": "control: braced variable and repeated slash naming an unprotected file"},
 
     {"id": "script-indirection-01", "class": "script-indirection", "command": "bash bad.sh", "cwd": "@ROOT@", "verdict": "block", "source": "project history: script indirection"},
     {"id": "script-indirection-02", "class": "script-indirection", "command": "sh ./bad.sh", "cwd": "@ROOT@", "verdict": "block", "source": "project history: script indirection"},

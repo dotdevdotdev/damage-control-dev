@@ -6,22 +6,12 @@ issue, and ``KNOWN_MISSES`` below names the classes whose issue is still open. A
 its fix lands, and the staleness test fails if a listed class no longer misses.
 """
 
-import re
-
 from damage_control import cli, corpus, fuzz
 
 DATA = corpus.load()
-QUOTE_OR_BACKSLASH = {"quote-split", "backslash"}
-DOT_OR_DOUBLE_SLASH = re.compile(r"//|/\.{1,2}/")
 
 # issue number -> (what the class is, which respellings it covers)
 KNOWN_MISSES = {
-    30: ("quote or backslash inside a protected path that also has a dot segment or repeated slash",
-         lambda r: r.family in QUOTE_OR_BACKSLASH and r.row_id.startswith("path-spelling")
-         and bool(DOT_OR_DOUBLE_SLASH.search(r.plain))),
-    33: ("braced variable reference followed by a repeated slash or inside a brace group",
-         lambda r: r.family == "home-variable" and "${hh}" in r.command
-         and r.row_id in ("path-spelling-06", "path-spelling-15", "path-spelling-17")),
 }
 
 
