@@ -492,14 +492,19 @@ def canonicalize_command(command: str) -> str:
 @functools.lru_cache(maxsize=512)
 def _canonicalize_for(command: str, home: str) -> str:
     """:func:`canonicalize_command` for a given home: the path ladders ask it about the same text once per guarded pattern."""
-    if not home or home == "~":
-        return command
-    out = command.replace("${HOME}", home).replace("$HOME", home)
-    # Only expand ``~`` when it begins a path (start of string or after a
-    # whitespace/quote/=/: boundary and immediately followed by ``/``), so we
-    # never touch ``~`` used as a literal (e.g. inside a sed expression).
-    out = re.sub(r'(^|[\s=:"\'(<>])~(?=/)', lambda m: m.group(1) + home, out)
-    return out
+    out = command
+    if home and home != "~":
+        out = out.replace("${HOME}", home).replace("$HOME", home)
+        # Only expand ``~`` when it begins a path (start of string or after a
+        # whitespace/quote/=/: boundary and immediately followed by ``/``), so we
+        # never touch ``~`` used as a literal (e.g. inside a sed expression).
+        out = re.sub(r'(^|[\s=:"\'(<>])~(?=/)', lambda m: m.group(1) + home, out)
+    return _PATH_RUN_RE.sub(lambda m: posixpath.normpath(m.group(0)), out)
+
+
+# A run of path characters holding a ``/``: the unit whose ``.`` / ``..`` segments and doubled or
+# trailing slashes are folded away (lexically), so every spelling of a path reaches the matchers as one.
+_PATH_RUN_RE = re.compile(r"[\w.@%+~\-]*(?:/+[\w.@%+~\-]*)+")
 
 
 def path_match_regex(expanded_pattern: str) -> str:
@@ -609,6 +614,11 @@ def matches_path_in_command(pattern: str, command: str) -> bool:
         if variants is None:
             return True
         haystacks.extend(v for v in variants if v != hay)
+    # A group member spelled ``~/..`` or ``$HOME/..`` only becomes a path once the group is expanded.
+    for hay in list(haystacks):
+        canon = canonicalize_command(hay)
+        if canon not in haystacks:
+            haystacks.append(canon)
 
     glob = is_glob_pattern(pattern)
     literals = _path_literals(pattern)
