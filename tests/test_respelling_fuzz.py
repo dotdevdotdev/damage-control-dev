@@ -19,10 +19,6 @@ KNOWN_MISSES = {
     30: ("quote or backslash inside a protected path that also has a dot segment or repeated slash",
          lambda r: r.family in QUOTE_OR_BACKSLASH and r.row_id.startswith("path-spelling")
          and bool(DOT_OR_DOUBLE_SLASH.search(r.plain))),
-    31: ("script run through an interpreter name split by quotes or a backslash",
-         lambda r: r.family in QUOTE_OR_BACKSLASH and r.row_id == "script-indirection-06"),
-    32: ("path held in a variable built from another variable",
-         lambda r: r.family == "home-variable" and r.row_id == "path-spelling-20"),
     33: ("braced variable reference followed by a repeated slash or inside a brace group",
          lambda r: r.family == "home-variable" and "${hh}" in r.command
          and r.row_id in ("path-spelling-06", "path-spelling-15", "path-spelling-17")),

@@ -120,7 +120,7 @@ def brace_group(command: str, cwd: str, rng: random.Random) -> List[str]:
     if "{" in command:
         return []
     return [command[:m.start()] + "{" + m.group(0) + ",/tmp/zz}" + command[m.end():]
-            for m in _HOME_PATH.finditer(command) if "," not in m.group(0)]
+            for m in _HOME_PATH.finditer(command) if "," not in m.group(0) and command[m.start() - 1:m.start()] != "="]
 
 
 def letter_case(command: str, cwd: str, rng: random.Random) -> List[str]:

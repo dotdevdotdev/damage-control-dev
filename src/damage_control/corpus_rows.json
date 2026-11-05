@@ -106,6 +106,9 @@
     {"id": "path-spelling-21", "class": "path-spelling", "command": "git -C ~/./.ssh show HEAD:id_rsa", "cwd": "/tmp", "verdict": "block", "source": "dot segments: -C option value"},
     {"id": "path-spelling-22", "class": "path-spelling", "command": "rm ~/./.claude/notes.txt", "cwd": "/tmp", "verdict": "block", "source": "dot segments: no-delete directory"},
     {"id": "path-spelling-23", "class": "path-spelling", "command": "echo x > ~/x/../notes.txt", "cwd": "/tmp", "verdict": "allow", "source": "control: dot segments naming an unprotected file"},
+    {"id": "path-spelling-24", "class": "path-spelling", "command": "hh=$HOME; d=$hh/x/..; cat $d/.ssh/id_rsa", "cwd": "/tmp", "verdict": "block", "source": "variable built from another variable: dot segment"},
+    {"id": "path-spelling-25", "class": "path-spelling", "command": "hh=$HOME; d=${hh}/x/..; cat $d/.ssh/id_rsa", "cwd": "/tmp", "verdict": "block", "source": "variable built from another variable: braced reference"},
+    {"id": "path-spelling-26", "class": "path-spelling", "command": "h=$HOME; d=$h/x; cat $d/.ssh/id_rsa", "cwd": "/tmp", "verdict": "allow", "source": "control: a variable built from another names a file below an unprotected directory"},
 
     {"id": "script-indirection-01", "class": "script-indirection", "command": "bash bad.sh", "cwd": "@ROOT@", "verdict": "block", "source": "project history: script indirection"},
     {"id": "script-indirection-02", "class": "script-indirection", "command": "sh ./bad.sh", "cwd": "@ROOT@", "verdict": "block", "source": "project history: script indirection"},
@@ -132,6 +135,8 @@
     {"id": "quoted-text-04", "class": "quoted-text", "command": "cat \"~/.ssh/id_rsa\"", "cwd": "@HOME@", "verdict": "block", "source": "project history: a quoted path the command opens"},
     {"id": "quoted-text-05", "class": "quoted-text", "command": "echo \"~/.ssh/id_rsa\" | xargs cat", "cwd": "@HOME@", "verdict": "block", "source": "project history: printed text that another command takes as its operand"},
     {"id": "quoted-text-06", "class": "quoted-text", "command": "cat > ~/.ssh/authorized_keys <<'EOF'\nkey\nEOF", "cwd": "@HOME@", "verdict": "block", "source": "project history: the file a heredoc body is written to"},
-    {"id": "quoted-text-07", "class": "quoted-text", "command": "bash <<'EOF'\ncat ~/.ssh/id_rsa\nEOF", "cwd": "@HOME@", "verdict": "block", "source": "project history: a heredoc body a shell runs"}
+    {"id": "quoted-text-07", "class": "quoted-text", "command": "bash <<'EOF'\ncat ~/.ssh/id_rsa\nEOF", "cwd": "@HOME@", "verdict": "block", "source": "project history: a heredoc body a shell runs"},
+    {"id": "script-indirection-09", "class": "script-indirection", "command": "pyt\"\"hon3 bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "interpreter name split by a quote pair"},
+    {"id": "script-indirection-10", "class": "script-indirection", "command": "py\\thon3 bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "interpreter name split by a backslash"}
   ]
 }

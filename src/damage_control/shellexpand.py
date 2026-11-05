@@ -16,7 +16,7 @@ Standard library only.
 """
 
 import re
-from typing import NamedTuple, Tuple
+from typing import Dict, NamedTuple, Tuple
 
 DEFAULT_SEPARATORS = " \t\n"  # what an unmodified IFS holds
 
@@ -87,3 +87,22 @@ def _separator_value(modifier: object) -> Tuple[str, str]:
     start = int(m.group(1))
     end = start + int(m.group(2)) if m.group(2) is not None else None
     return " " * len(DEFAULT_SEPARATORS[start:end]), ""
+
+
+def resolve_assignment_chain(assigns: Dict[str, str]) -> Dict[str, str]:
+    """Each variable's value with the earlier variables it is built from replaced by their values.
+
+    ``h=$HOME; d=$h/x`` holds ``$HOME/x`` in ``d``, so a later ``$d`` expands to the same text the
+    shell would. ``assigns`` is in the order the command assigns them; a later assignment to a name
+    replaces the earlier one, as it does in the shell. A reference to a name not yet assigned stays.
+    """
+    resolved: Dict[str, str] = {}
+    for name, value in assigns.items():
+        for known, known_value in resolved.items():
+            value = _variable_ref(known).sub(lambda _m, v=known_value: v, value)
+        resolved[name] = value
+    return resolved
+
+
+def _variable_ref(name: str) -> "re.Pattern[str]":
+    return re.compile(r"\$\{%s\}|\$%s(?![A-Za-z0-9_])" % (re.escape(name), re.escape(name)))
