@@ -25,7 +25,7 @@ import posixpath
 import re
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
-from damage_control import scriptfile
+from damage_control import explain, scriptfile
 
 OK = scriptfile.OK
 MISSING = scriptfile.MISSING
@@ -292,6 +292,7 @@ def _find(dirs: Sequence[str], names_in: "Callable[[str], Sequence[str]]", label
     return None, "", outcome
 
 
+@explain.traced_locate
 def locate(run: Run) -> Recipe:
     label_head = f"{run.tool} " + " ".join(c[0] for c in run.calls)
     label_head = label_head.strip()

@@ -5,6 +5,7 @@
     damage-control-dev doctor [--fix] [--json]
     damage-control-dev uninstall [--purge]
     damage-control-dev check "<command>"    # what would the hook decide?
+    damage-control-dev explain "<command>" [--cwd D] [--mode default|bypass] [--json]  # how it was judged
     damage-control-dev rules                # the enforced rule ids
     damage-control-dev corpus run [--json]  # replay the conformance corpus through the real hook
     damage-control-dev corpus fuzz [--n N] [--seed S] [--json]  # respell the corpus rows; verdicts must hold
@@ -19,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from damage_control import __version__, corpus, engine, fuzz, install, packs, sandbox
+from damage_control import __version__, corpus, engine, explain, fuzz, install, packs, sandbox
 from damage_control import claude_code as cc
 from damage_control import harness_config as hc
 from damage_control.profile import ProfileError, load_profile
@@ -65,6 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("text")
     p.add_argument("--json", action="store_true")
 
+    p = sub.add_parser("explain", help="show how a shell command was judged")
+    p.add_argument("--profile", metavar="PATH")
+    p.add_argument("--cwd", metavar="DIR", help="the directory the command runs in (default: here)")
+    p.add_argument("--mode", choices=explain.MODES, default="default", help="the permission mode to judge under")
+    p.add_argument("text")
+    p.add_argument("--json", action="store_true")
+
     p = sub.add_parser("rules", help="list the enforced rule ids")
     p.add_argument("--profile", metavar="PATH")
     p.add_argument("--json", action="store_true")
@@ -106,6 +114,12 @@ def _cmd_check(args: argparse.Namespace) -> int:
     else:
         print(f"{result.get('decision')}: {result.get('reason') or 'no rule matched'}"
               + (f" [{result['id']}]" if result.get("id") else ""))
+    return 0
+
+
+def _cmd_explain(args: argparse.Namespace) -> int:
+    report = explain.build(args.text, str(Path(args.cwd).resolve() if args.cwd else Path.cwd()), args.mode)
+    print(json.dumps(report, indent=2, default=str) if args.json else explain.render(report))
     return 0
 
 
@@ -180,6 +194,8 @@ def run(args: argparse.Namespace) -> int:
         return install.uninstall(args.scope, args.settings, purge=args.purge)
     if command == "check":
         return _cmd_check(args)
+    if command == "explain":
+        return _cmd_explain(args)
     if command == "rules":
         return _cmd_rules(args)
     if command == "corpus":

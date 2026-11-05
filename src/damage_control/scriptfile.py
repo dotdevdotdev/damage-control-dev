@@ -16,6 +16,8 @@ import re
 import stat
 from typing import NamedTuple, Optional
 
+from damage_control import explain
+
 MAX_SCRIPT_BYTES = 256 * 1024  # the same ceiling a typed command gets (engine.MAX_COMMAND_CHARS)
 _BINARY_SNIFF_BYTES = 8192
 _MAGIC = (b"\x7fELF", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe",
@@ -38,6 +40,7 @@ class ScriptFile(NamedTuple):
     why: str = ""
 
 
+@explain.traced_read
 def read_script(path: str) -> ScriptFile:
     """The text at ``path`` (symlinks resolved), or a status saying why there is none."""
     try:

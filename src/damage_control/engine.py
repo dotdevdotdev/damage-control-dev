@@ -28,7 +28,7 @@ from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple, Union
 
-from damage_control import audit, data_operands, nonexec, recipefile, scriptfile, shellexpand
+from damage_control import audit, data_operands, explain, nonexec, recipefile, scriptfile, shellexpand
 from damage_control.profile import GENERIC
 
 
@@ -10726,6 +10726,7 @@ def _decide_rules(
     zero_access = config.get("zeroAccessPaths", [])
     read_only = config.get("readOnlyPaths", [])
     no_delete = config.get("noDeletePaths", [])
+    explain.note_judged(command, scripted, len(bash_patterns))
 
     # Match rules against the raw command AND its normalized subcommands, so a
     # quoting/escaping/$VAR trick (``r\m``, ``r''m``, ``R=rm; $R -rf``) is caught
@@ -10798,6 +10799,7 @@ def _decide_rules(
             else:
                 hit = _search(pattern, haystacks + normalized_haystacks)
             if hit:
+                explain.note_match(rule_id, "ask" if should_ask else "bypassable" if bypassable else "block")
                 if should_ask:
                     if first_ask is None:
                         first_ask = {
