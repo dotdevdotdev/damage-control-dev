@@ -5430,9 +5430,9 @@ def _indirect_verbs(command: str, guarded: bool = False, _depth: int = 0, _outer
                     replacement = shlex.split(value)
                 except ValueError:
                     replacement = [value]
-                if replacement and replacement != [text]:
+                if replacement != [text]:  # an empty value drops out and the next word is the verb
                     rebuilt = _ind_rebuild(toks, head, replacement)
-                resolved.append(env.preamble(rebuilt) + rebuilt)
+                    resolved.append(env.preamble(rebuilt) + rebuilt)
             elif why is None:
                 why = _ind_head_unresolved(value, guarded)
                 if _IND_BARE_VARIABLE_RE.match(value) and len(toks) > head + 1:
