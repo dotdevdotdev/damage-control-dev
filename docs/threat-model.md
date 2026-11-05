@@ -39,7 +39,7 @@ The rules are tiered: some operations are **blocked**, some **ask** a human firs
 - **Network egress.** Nothing filters outbound connections or what is sent over them. A command that exfiltrates data with a harmless-looking verb is not stopped.
 - **The agent requesting an exception.** An agent that expects a command to be blocked can end it with `# ask: <reason>`. The comment is part of the command text, so the agent writes it, and it grants nothing: a block (a hard block, a read-only, no-delete or zero-access path, a protected command) becomes an `ask`, and the human sees the agent's reason and decides that one command. The ask is not lowered by `bypassPermissions`, `auto` or `acceptEdits`, and in an unattended session it stays a block, whatever `unattended_allow` lists. The control plane ignores the comment. A command that would be allowed is unchanged. The audit row records the reason, the original rule id and that the verdict was raised from `block`. `# allow:` has no effect.
 - **What a script does after the hook read it.** Files a command runs are read once, when the hook runs, and recipes run by `make`, `npm run` and similar are not read at all. See [script indirection](#script-indirection) for the list.
-- **Containment and resource limits.** No filesystem sandbox, no CPU, memory or disk quota, no process isolation.
+- **Containment and resource limits.** No filesystem sandbox, no CPU, memory or disk quota, no process isolation. Claude Code's own sandbox is the layer that limits what a started command can reach; it is off by default and covers shell commands only. See [pairing with the sandbox](sandbox.md), and run `damage-control-dev doctor` to see whether it is on and whether its unsandboxed retry is open.
 - **Logic errors and bad code.** Code that corrupts data through an application bug looks like any other code.
 - **Supply chain attacks.** A malicious dependency is not a destructive command until something runs it.
 - **Other harnesses and platforms.** Only Claude Code on macOS and Linux is supported.
@@ -232,7 +232,7 @@ Damage control is one layer. Keep the others:
 - Keep backups of anything you cannot regenerate.
 - Commit often. Git history undoes most agent mistakes.
 - Keep the audit log (`logs/damage-control/<date>.jsonl` under `~/.damage-control/` or `$DAMAGE_CONTROL_HOME`, one JSON line per decision) and read it when something surprises you.
-- Prefer a container or VM when you need real containment. This tool is not that.
+- Turn on Claude Code's sandbox and close its unsandboxed retry ([pairing with the sandbox](sandbox.md)). Prefer a container or VM when you need stronger containment. This tool is not that.
 
 ## Reporting a bypass
 

@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from damage_control import __version__, engine, install, packs
+from damage_control import __version__, engine, install, packs, sandbox
 from damage_control import claude_code as cc
 from damage_control import harness_config as hc
 from damage_control.profile import ProfileError, load_profile
@@ -145,6 +145,7 @@ def run(args: argparse.Namespace) -> int:
         return _print_findings(install.inspect(args.scope, args.settings, profile_hint=profile), args.json)
     if command == "doctor":
         findings = install.inspect(args.scope, args.settings, deep=True, profile_hint=profile)
+        findings += sandbox.findings(args.settings)
         code = _print_findings(findings, args.json)
         if args.fix and code:
             print("--fix: re-running init to repair the registration", file=sys.stderr)

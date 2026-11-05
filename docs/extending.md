@@ -182,7 +182,7 @@ $ damage-control-dev status
 [ok] protected paths are owner-writable only
 ```
 
-**`doctor`** is `status` plus a self-test and the Claude Code version check. `doctor --fix` re-runs `init` to repair a drifted registration. `--json` on `status` and `doctor` emits `{ok, version, profile, findings}`.
+**`doctor`** is `status` plus a self-test, the Claude Code version check and informational `sandbox:` lines ([sandbox pairing](sandbox.md#what-doctor-reports); never scored). `doctor --fix` re-runs `init` to repair a drifted registration. `--json` on `status` and `doctor` emits `{ok, version, profile, findings}`.
 
 **Exit codes** for `init`, `status`, `doctor` and `uninstall`: `0` fine, `1` a refusal (`REFUSED: …` on stderr) or a `[!!]` finding, `2` bad command-line usage. `check`, `rules` and `packs|groups list` return `0`.
 
