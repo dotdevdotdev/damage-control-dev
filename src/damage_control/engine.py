@@ -28,7 +28,7 @@ from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple, Union
 
-from damage_control import audit, recipefile, scriptfile, shellexpand
+from damage_control import audit, nonexec, recipefile, scriptfile, shellexpand
 from damage_control.profile import GENERIC
 
 
@@ -11341,6 +11341,8 @@ def _shell_script_operand(args: List[str]) -> Optional[str]:
             return args[i + 1] if i + 1 < len(args) else None
         if w in ("-c", "--command") or w.startswith("--command="):
             return None
+        if nonexec.runs_no_program("shell", w):
+            return None
         if w in ("--rcfile", "--init-file"):
             i += 2
         elif w.startswith("--"):
@@ -11364,7 +11366,7 @@ def _interpreter_script_operand(lang: str, args: List[str]) -> Optional[str]:
             return args[i + 1] if i + 1 < len(args) else None
         if w == "-":
             return None
-        if w in inline:
+        if w in inline or nonexec.runs_no_program(lang, w):
             return None
         if w in takes_value:
             i += 2

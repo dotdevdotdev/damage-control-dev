@@ -22,7 +22,8 @@ source says *control* is the same spelling on a harmless command: it must stay a
 | [alternative-utility](#alternative-utility) | 9 | A different utility or interpreter one-liner with the same effect. |
 | [path-spelling](#path-spelling) | 22 | One protected path written relative, with ~, with a variable or in a brace group. |
 | [script-indirection](#script-indirection) | 8 | The operation held in a file the command runs. |
-| **Total** | 88 | |
+| [data-operand](#data-operand) | 11 | Text a file holds, where the command only names the file as an argument and does not run it. |
+| **Total** | 99 | |
 
 ## quote-splitting
 
@@ -167,6 +168,24 @@ The operation held in a file the command runs.
 | `python3 bad.py` | `@ROOT@` | block | project history: script indirection |
 | `sh -c 'sh bad.sh'` | `@ROOT@` | block | project history: script indirection |
 | `bash clean.sh` | `@ROOT@` | allow | control: a script that holds nothing guarded |
+
+## data-operand
+
+Text a file holds, where the command only names the file as an argument and does not run it.
+
+| Command | Directory | Verdict | Source |
+|---|---|---|---|
+| `shasum data.yaml` | `@ROOT@` | allow | project history: data file operands |
+| `cat data.yaml` | `@ROOT@` | allow | project history: data file operands |
+| `diff plain.yaml data.yaml` | `@ROOT@` | allow | project history: data file operands |
+| `node --eval='1' data.yaml` | `@ROOT@` | allow | project history: data file operands |
+| `node --check data.yaml` | `@ROOT@` | allow | project history: data file operands |
+| `python3 --version data.yaml` | `@ROOT@` | allow | project history: data file operands |
+| `bash -n data.yaml` | `@ROOT@` | allow | project history: data file operands |
+| `bash data.yaml` | `@ROOT@` | block | control: the same file run as a script |
+| `python3 data.yaml` | `@ROOT@` | block | control: the same file run as a script |
+| `node data.yaml` | `@ROOT@` | block | control: the same file run as a script |
+| `bash plain.yaml` | `@ROOT@` | allow | control: a script that holds nothing guarded |
 
 ## Known limits
 
