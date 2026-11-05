@@ -1,0 +1,86 @@
+{
+  "classes": {
+    "quote-splitting": "A word split or wrapped by quotes that the shell removes before running it.",
+    "backslashes": "A backslash the shell removes inside a word.",
+    "separator-variable": "The shell's field separator variable used where a space would go.",
+    "computed-verb": "The command word produced by a substitution or a variable.",
+    "encoded-payload": "A decoded program piped into a shell.",
+    "alternative-utility": "A different utility or interpreter one-liner with the same effect.",
+    "path-spelling": "One protected path written relative, with ~, with a variable or in a brace group.",
+    "script-indirection": "The operation held in a file the command runs."
+  },
+  "files": {
+    "bad.sh": "#!/bin/sh\nrm -rf /\n",
+    "bad.py": "import os\nos.system('rm -rf /')\n",
+    "clean.sh": "#!/bin/sh\necho hi\n"
+  },
+  "rows": [
+    {"id": "quote-splitting-01", "class": "quote-splitting", "command": "r\"\"m -rf /", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: quote splitting"},
+    {"id": "quote-splitting-02", "class": "quote-splitting", "command": "r''m -rf /", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: quote splitting"},
+    {"id": "quote-splitting-03", "class": "quote-splitting", "command": "\"rm\" -rf /", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: quote splitting"},
+    {"id": "quote-splitting-04", "class": "quote-splitting", "command": "'r'\"m\" -rf /", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: quote splitting"},
+    {"id": "quote-splitting-05", "class": "quote-splitting", "command": "cat ~/.ss\"\"h/id_rsa", "cwd": "@HOME@", "verdict": "block", "source": "GuardFall: quote splitting"},
+    {"id": "quote-splitting-06", "class": "quote-splitting", "command": "cat ~/.ssh/id_'rsa'", "cwd": "@HOME@", "verdict": "block", "source": "GuardFall: quote splitting"},
+    {"id": "quote-splitting-07", "class": "quote-splitting", "command": "echo x > ~/.zsh''env", "cwd": "@HOME@", "verdict": "block", "source": "GuardFall: quote splitting"},
+    {"id": "quote-splitting-08", "class": "quote-splitting", "command": "bash -c 'r\"\"m -rf /'", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: quote splitting"},
+    {"id": "quote-splitting-09", "class": "quote-splitting", "command": "ls \"-l\"'a'", "cwd": "/tmp", "verdict": "allow", "source": "control: same quoting on a harmless command"},
+
+    {"id": "backslashes-01", "class": "backslashes", "command": "\\rm -rf /", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: backslashes"},
+    {"id": "backslashes-02", "class": "backslashes", "command": "r\\m -rf /", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: backslashes"},
+    {"id": "backslashes-03", "class": "backslashes", "command": "cat ~/.ssh/id_\\rsa", "cwd": "@HOME@", "verdict": "block", "source": "GuardFall: backslashes"},
+    {"id": "backslashes-04", "class": "backslashes", "command": "cat ~/.s\\sh/id_rsa", "cwd": "@HOME@", "verdict": "block", "source": "GuardFall: backslashes"},
+    {"id": "backslashes-05", "class": "backslashes", "command": "echo x > ~/.zsh\\env", "cwd": "@HOME@", "verdict": "block", "source": "GuardFall: backslashes"},
+    {"id": "backslashes-06", "class": "backslashes", "command": "\\ls -la", "cwd": "/tmp", "verdict": "allow", "source": "control: same escape on a harmless command"},
+
+    {"id": "separator-variable-01", "class": "separator-variable", "command": "cat${IFS}~/.ssh/id_rsa", "cwd": "@HOME@", "verdict": "block", "source": "GuardFall: separator variables"},
+    {"id": "separator-variable-02", "class": "separator-variable", "command": "cat$IFS~/.ssh/id_rsa", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: separator variables"},
+    {"id": "separator-variable-03", "class": "separator-variable", "command": "cat${IFS:0:1}~/.ssh/id_rsa", "cwd": "@HOME@", "verdict": "block", "source": "GuardFall: separator variables"},
+    {"id": "separator-variable-04", "class": "separator-variable", "command": "rm${IFS}-rf${IFS}/", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: separator variables"},
+    {"id": "separator-variable-05", "class": "separator-variable", "command": "echo${IFS}x${IFS}>${IFS}~/.zshenv", "cwd": "@HOME@", "verdict": "block", "source": "GuardFall: separator variables"},
+    {"id": "separator-variable-06", "class": "separator-variable", "command": "bash -c 'cat${IFS}~/.ssh/id_rsa'", "cwd": "@HOME@", "verdict": "block", "source": "GuardFall: separator variables"},
+    {"id": "separator-variable-07", "class": "separator-variable", "command": "IFS=,; cat${IFS}/etc/hostname", "cwd": "/tmp", "verdict": "ask", "source": "GuardFall: separator variables (redefined, so unverifiable)"},
+    {"id": "separator-variable-08", "class": "separator-variable", "command": "cat${IFS}/etc/hostname", "cwd": "/tmp", "verdict": "allow", "source": "control: same spelling on a harmless command"},
+
+    {"id": "computed-verb-01", "class": "computed-verb", "command": "$(echo rm) -rf /", "cwd": "/tmp", "verdict": "ask", "source": "GuardFall: substitution as the verb"},
+    {"id": "computed-verb-02", "class": "computed-verb", "command": "`echo rm` -rf /", "cwd": "/tmp", "verdict": "ask", "source": "GuardFall: substitution as the verb"},
+    {"id": "computed-verb-03", "class": "computed-verb", "command": "x=rm; $x -rf /", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: variable as the verb"},
+    {"id": "computed-verb-04", "class": "computed-verb", "command": "\"$(printf rm)\" -rf /", "cwd": "/tmp", "verdict": "ask", "source": "GuardFall: substitution as the verb"},
+
+    {"id": "computed-verb-05", "class": "computed-verb", "command": "x=ls; $x -la", "cwd": "/tmp", "verdict": "allow", "source": "control: a variable verb that resolves to a harmless command"},
+
+    {"id": "encoded-payload-01", "class": "encoded-payload", "command": "echo cm0gLXJmIC8= | base64 -d | sh", "cwd": "/tmp", "verdict": "ask", "source": "GuardFall: encoded payload"},
+    {"id": "encoded-payload-02", "class": "encoded-payload", "command": "echo cm0gLXJmIC8= | base64 --decode | bash", "cwd": "/tmp", "verdict": "ask", "source": "GuardFall: encoded payload"},
+    {"id": "encoded-payload-03", "class": "encoded-payload", "command": "base64 -d <<< cm0gLXJmIC8= | sh", "cwd": "/tmp", "verdict": "ask", "source": "GuardFall: encoded payload"},
+    {"id": "encoded-payload-06", "class": "encoded-payload", "command": "echo aGk= | base64 -d", "cwd": "/tmp", "verdict": "allow", "source": "control: decode without running the result"},
+
+    {"id": "alternative-utility-01", "class": "alternative-utility", "command": "find / -delete", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: alternative utilities"},
+    {"id": "alternative-utility-02", "class": "alternative-utility", "command": "find ~ -type f -delete", "cwd": "@HOME@", "verdict": "block", "source": "GuardFall: alternative utilities"},
+    {"id": "alternative-utility-03", "class": "alternative-utility", "command": "dd if=/dev/zero of=/dev/sda", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: alternative utilities"},
+    {"id": "alternative-utility-04", "class": "alternative-utility", "command": "sed -i s/a/b/ ~/.zshenv", "cwd": "@HOME@", "verdict": "block", "source": "GuardFall: alternative utilities"},
+    {"id": "alternative-utility-05", "class": "alternative-utility", "command": "python3 -c \"import shutil; shutil.rmtree('/')\"", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: interpreter one-liners"},
+    {"id": "alternative-utility-06", "class": "alternative-utility", "command": "python3 -c \"import os; os.system('rm -rf /')\"", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: interpreter one-liners"},
+    {"id": "alternative-utility-07", "class": "alternative-utility", "command": "perl -e 'system(\"rm -rf /\")'", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: interpreter one-liners"},
+    {"id": "alternative-utility-08", "class": "alternative-utility", "command": "node -e \"require('child_process').execSync('rm -rf /')\"", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: interpreter one-liners"},
+    {"id": "alternative-utility-09", "class": "alternative-utility", "command": "find . -name '*.pyc'", "cwd": "/tmp", "verdict": "allow", "source": "control: find without a delete action"},
+
+    {"id": "path-spelling-01", "class": "path-spelling", "command": "echo x > .zshenv", "cwd": "@HOME@", "verdict": "block", "source": "project history: relative operands"},
+    {"id": "path-spelling-02", "class": "path-spelling", "command": "echo x > ./.zshenv", "cwd": "@HOME@", "verdict": "block", "source": "project history: relative operands"},
+    {"id": "path-spelling-03", "class": "path-spelling", "command": "echo x > ~/.zshenv", "cwd": "/tmp", "verdict": "block", "source": "project history: path spellings"},
+    {"id": "path-spelling-04", "class": "path-spelling", "command": "echo x > $HOME/.zshenv", "cwd": "/tmp", "verdict": "block", "source": "project history: path spellings"},
+    {"id": "path-spelling-05", "class": "path-spelling", "command": "echo x | tee ${HOME}/.zshenv", "cwd": "/tmp", "verdict": "block", "source": "project history: path spellings"},
+    {"id": "path-spelling-06", "class": "path-spelling", "command": "echo x > {@HOME@/.zshenv,/tmp/zz}", "cwd": "/tmp", "verdict": "block", "source": "project history: path spellings"},
+    {"id": "path-spelling-08", "class": "path-spelling", "command": "echo x > ../.zshenv", "cwd": "@HOME@/project", "verdict": "block", "source": "project history: relative operands"},
+    {"id": "path-spelling-09", "class": "path-spelling", "command": "cat id_rsa", "cwd": "@HOME@/.ssh", "verdict": "block", "source": "project history: relative operands"},
+    {"id": "path-spelling-10", "class": "path-spelling", "command": "cat $HOME/.ssh/id_rsa", "cwd": "/tmp", "verdict": "block", "source": "project history: path spellings"},
+    {"id": "path-spelling-11", "class": "path-spelling", "command": "echo x > .zshenv", "cwd": "/tmp", "verdict": "allow", "source": "control: same name outside the home directory"},
+
+    {"id": "script-indirection-01", "class": "script-indirection", "command": "bash bad.sh", "cwd": "@ROOT@", "verdict": "block", "source": "project history: script indirection"},
+    {"id": "script-indirection-02", "class": "script-indirection", "command": "sh ./bad.sh", "cwd": "@ROOT@", "verdict": "block", "source": "project history: script indirection"},
+    {"id": "script-indirection-03", "class": "script-indirection", "command": "source bad.sh", "cwd": "@ROOT@", "verdict": "block", "source": "project history: script indirection"},
+    {"id": "script-indirection-04", "class": "script-indirection", "command": "./bad.sh", "cwd": "@ROOT@", "verdict": "block", "source": "project history: script indirection"},
+    {"id": "script-indirection-05", "class": "script-indirection", "command": "sudo bash @ROOT@/bad.sh", "cwd": "/tmp", "verdict": "block", "source": "project history: script indirection"},
+    {"id": "script-indirection-06", "class": "script-indirection", "command": "python3 bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "project history: script indirection"},
+    {"id": "script-indirection-07", "class": "script-indirection", "command": "sh -c 'sh bad.sh'", "cwd": "@ROOT@", "verdict": "block", "source": "project history: script indirection"},
+    {"id": "script-indirection-08", "class": "script-indirection", "command": "bash clean.sh", "cwd": "@ROOT@", "verdict": "allow", "source": "control: a script that holds nothing guarded"}
+  ]
+}
