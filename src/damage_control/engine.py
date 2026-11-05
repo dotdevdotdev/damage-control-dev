@@ -5546,12 +5546,40 @@ def _echoes_its_text(stage: str) -> bool:
     return False
 
 
+_TEXT_ESCAPE_RE = re.compile(r"\\(?:x[0-9a-fA-F]|u[0-9a-fA-F]|U[0-9a-fA-F]|[0-7]{1,3})")
+
+
+def _decodes_its_input(stage: str) -> bool:
+    """Whether ``stage`` rewrites text into other text: an escape-writing ``printf``/``echo``, ``xxd -r``, ``rev`` or a ``tr`` translation.
+
+    What such a stage writes is not the text typed in the command, so a program read from it
+    cannot be judged as written.
+    """
+    words = _ind_program_words(stage)
+    if not words:
+        return False
+    head, args = os.path.basename(words[0]), words[1:]
+    if head in _PRODUCER_READABLE:
+        return any(_TEXT_ESCAPE_RE.search(a) for a in args)
+    if head == "xxd":
+        return any(re.fullmatch(r"-[A-Za-z]*r[A-Za-z]*", a) for a in args)
+    if head == "rev":
+        return True
+    if head == "tr":
+        return sum(1 for a in args if not a.startswith("-")) >= 2
+    return False
+
+
 def _chain_verdict(chain: List[str]) -> Optional[Tuple[str, str]]:
     """The verdict on the producers (first stage last in ``chain``) of a program-reading consumer."""
+    if any(_is_fetch_head(s) for s in chain) and not (
+        _HERE_STRING_RE.search(chain[-1]) or "<<" in chain[-1] or _echoes_its_text(chain[-1])
+    ):
+        return "block", "a downloaded program is piped straight into a shell/interpreter"
+    if any(_decodes_its_input(s) for s in chain):
+        return "ask", "a program is piped into a shell/interpreter through a decoding step"
     if _HERE_STRING_RE.search(chain[-1]) or "<<" in chain[-1] or _echoes_its_text(chain[-1]):
         return None
-    if any(_is_fetch_head(s) for s in chain):
-        return "block", "a downloaded program is piped straight into a shell/interpreter"
     return "ask", "a program is piped into a shell from a producer nothing can read"
 
 
