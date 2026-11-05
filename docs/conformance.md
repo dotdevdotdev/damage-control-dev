@@ -200,9 +200,9 @@ the file ~/.ssh/id_rsa is guarded
 EOF` | `@HOME@` | allow | control: a path named in a heredoc body written to a file |
 | `cat "~/.ssh/id_rsa"` | `@HOME@` | block | project history: a quoted path the command opens |
 | `echo "~/.ssh/id_rsa" \| xargs cat` | `@HOME@` | block | project history: printed text that another command takes as its operand |
-| `cat <<'EOF' \| xargs cat
-~/.ssh/id_rsa
-EOF` | `@HOME@` | block | project history: a heredoc body that is piped on as operands |
+| `cat > ~/.ssh/authorized_keys <<'EOF'
+key
+EOF` | `@HOME@` | block | project history: the file a heredoc body is written to |
 | `bash <<'EOF'
 cat ~/.ssh/id_rsa
 EOF` | `@HOME@` | block | project history: a heredoc body a shell runs |

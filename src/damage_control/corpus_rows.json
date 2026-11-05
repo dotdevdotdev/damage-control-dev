@@ -131,7 +131,7 @@
     {"id": "quoted-text-03", "class": "quoted-text", "command": "cat > /tmp/dc-notes.md <<'EOF'\nthe file ~/.ssh/id_rsa is guarded\nEOF", "cwd": "@HOME@", "verdict": "allow", "source": "control: a path named in a heredoc body written to a file"},
     {"id": "quoted-text-04", "class": "quoted-text", "command": "cat \"~/.ssh/id_rsa\"", "cwd": "@HOME@", "verdict": "block", "source": "project history: a quoted path the command opens"},
     {"id": "quoted-text-05", "class": "quoted-text", "command": "echo \"~/.ssh/id_rsa\" | xargs cat", "cwd": "@HOME@", "verdict": "block", "source": "project history: printed text that another command takes as its operand"},
-    {"id": "quoted-text-06", "class": "quoted-text", "command": "cat <<'EOF' | xargs cat\n~/.ssh/id_rsa\nEOF", "cwd": "@HOME@", "verdict": "block", "source": "project history: a heredoc body that is piped on as operands"},
+    {"id": "quoted-text-06", "class": "quoted-text", "command": "cat > ~/.ssh/authorized_keys <<'EOF'\nkey\nEOF", "cwd": "@HOME@", "verdict": "block", "source": "project history: the file a heredoc body is written to"},
     {"id": "quoted-text-07", "class": "quoted-text", "command": "bash <<'EOF'\ncat ~/.ssh/id_rsa\nEOF", "cwd": "@HOME@", "verdict": "block", "source": "project history: a heredoc body a shell runs"}
   ]
 }
