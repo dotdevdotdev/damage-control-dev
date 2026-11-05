@@ -7,6 +7,7 @@
     damage-control-dev check "<command>"    # what would the hook decide?
     damage-control-dev rules                # the enforced rule ids
     damage-control-dev corpus run [--json]  # replay the conformance corpus through the real hook
+    damage-control-dev corpus fuzz [--n N] [--seed S] [--json]  # respell the corpus rows; verdicts must hold
     damage-control-dev packs|groups list|enable|disable [name]
 
 Exit status: 0 = fine, 1 = a refusal or a finding marked ``[!!]``, 2 = bad usage.
@@ -18,7 +19,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from damage_control import __version__, corpus, engine, install, packs, sandbox
+from damage_control import __version__, corpus, engine, fuzz, install, packs, sandbox
 from damage_control import claude_code as cc
 from damage_control import harness_config as hc
 from damage_control.profile import ProfileError, load_profile
@@ -69,8 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("corpus", help="replay the conformance corpus through the real hook")
-    p.add_argument("action", choices=["run"])
+    p.add_argument("action", choices=["run", "fuzz"])
     p.add_argument("--json", action="store_true")
+    p.add_argument("--n", type=int, default=fuzz.DEFAULT_N, help="fuzz: how many respellings (default %(default)s)")
+    p.add_argument("--seed", type=int, default=fuzz.DEFAULT_SEED, help="fuzz: random seed (default %(default)s)")
 
     for noun in ("packs", "groups"):
         p = sub.add_parser(noun, help=f"list, enable or disable {noun} (enable/disable: human terminal only)")
@@ -120,6 +123,10 @@ def _cmd_rules(args: argparse.Namespace) -> int:
 
 def _cmd_corpus(args: argparse.Namespace) -> int:
     data = corpus.load()
+    if args.action == "fuzz":
+        result = fuzz.run(data, args.n, args.seed)
+        print(json.dumps(result, indent=2) if args.json else fuzz.report(result))
+        return 1 if result["mismatches"] else 0
     results = corpus.replay(data)
     if args.json:
         print(json.dumps({"ok": all(r["ok"] for r in results),

@@ -26,6 +26,12 @@ for the scratch tree built from the `files` map.
 Then run `damage-control-dev corpus run` and `python tools/conformance_doc.py`. A row that fails
 until its fix lands stays out of the corpus: every row in the table passes on `main`.
 
+`damage-control-dev corpus fuzz [--n N] [--seed S]` respells every `block` and `ask` row (quote splits,
+backslashes, the field separator variable, `~` / `$HOME` / `${HOME}` / absolute / variable forms of the
+home directory, repeated slashes, `.` and `..` segments, brace groups, letter case where the platform folds
+it) and lists every respelling whose verdict differs from its row. The same seed gives the same list. Send
+a miss as its own issue; the test suite lists the classes with an open issue and excludes only those.
+
 Whoever submits a row that leads to a fix is credited by name (or handle) in the release notes.
 
 See `docs/rule-authoring.md` and `docs/extending.md`.
