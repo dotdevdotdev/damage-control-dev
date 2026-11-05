@@ -20,11 +20,11 @@ source says *control* is the same spelling on a harmless command: it must stay a
 | [computed-verb](#computed-verb) | 13 | The command word produced by a substitution or a variable. |
 | [encoded-payload](#encoded-payload) | 13 | A decoded program piped into a shell. |
 | [alternative-utility](#alternative-utility) | 9 | A different utility or interpreter one-liner with the same effect. |
-| [path-spelling](#path-spelling) | 25 | One protected path written relative, with ~, with a variable or in a brace group. |
+| [path-spelling](#path-spelling) | 32 | One protected path written relative, with ~, with a variable or in a brace group. |
 | [script-indirection](#script-indirection) | 10 | The operation held in a file the command runs. |
 | [data-operand](#data-operand) | 10 | Text a file holds, where the command only names the file as an argument and does not run it. |
 | [quoted-text](#quoted-text) | 7 | A protected path written inside text a command only prints, sends or writes, against the same text where the command opens it. |
-| **Total** | 110 | |
+| **Total** | 117 | |
 
 ## quote-splitting
 
@@ -157,6 +157,13 @@ One protected path written relative, with ~, with a variable or in a brace group
 | `hh=$HOME; d=$hh/x/..; cat $d/.ssh/id_rsa` | `/tmp` | block | variable built from another variable: dot segment |
 | `hh=$HOME; d=${hh}/x/..; cat $d/.ssh/id_rsa` | `/tmp` | block | variable built from another variable: braced reference |
 | `h=$HOME; d=$h/x; cat $d/.ssh/id_rsa` | `/tmp` | allow | control: a variable built from another names a file below an unprotected directory |
+| `echo x > ~/./.""zshenv` | `/tmp` | block | dot segments: quote split inside the protected name |
+| `echo x > ~//.\zshenv` | `/tmp` | block | repeated slash: backslash inside the protected name |
+| `rm ~/""./.claude/notes.txt` | `/tmp` | block | dot segments: quote split inside a no-delete directory |
+| `hh=~; echo x > ${hh}//.zshenv` | `/tmp` | block | repeated slash after a braced variable reference |
+| `hh=@HOME@; echo x > {${hh}/.zshenv,/tmp/zz}` | `/tmp` | block | braced variable reference inside a brace group |
+| `hh=~; echo x > {${hh}/./.zshenv,/tmp/zz}` | `/tmp` | block | braced variable reference and dot segment inside a brace group |
+| `hh=~; echo x > ${hh}//notes.txt` | `/tmp` | allow | control: braced variable and repeated slash naming an unprotected file |
 
 ## script-indirection
 

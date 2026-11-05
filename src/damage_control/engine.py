@@ -553,7 +553,7 @@ _MEMBER_ACCESS_TOKEN_RE = re.compile(
 )
 
 
-_BRACE_GROUP_RE = re.compile(r'(?<![$\\])\{([^{}\s]*,[^{}\s]*)\}')
+_BRACE_GROUP_RE = re.compile(r'(?<![$\\])\{((?:\$\{\w+\}|[^{}\s])*,(?:\$\{\w+\}|[^{}\s])*)\}')
 _BRACE_VARIANT_CAP = 256
 
 
@@ -1081,6 +1081,12 @@ def path_ladder_haystacks(command: str, path: str) -> List[str]:
     haystacks: List[str] = []
     for text in spellings:
         haystacks += [h for h in masked_with_keep(mask_sed_substitutions(text), _mentions_path) if h not in haystacks]
+    # Quotes and backslashes are gone from the masked words, so the dot segments and repeated slashes
+    # they were splitting (``~/./.""zshenv``) fold only now.
+    for hay in list(haystacks):
+        folded = canonicalize_command(hay)
+        if folded not in haystacks:
+            haystacks.append(folded)
     return haystacks
 
 
