@@ -8,7 +8,8 @@
     "alternative-utility": "A different utility or interpreter one-liner with the same effect.",
     "path-spelling": "One protected path written relative, with ~, with a variable or in a brace group.",
     "script-indirection": "The operation held in a file the command runs.",
-    "data-operand": "Text a file holds, where the command only names the file as an argument and does not run it."
+    "data-operand": "Text a file holds, where the command only names the file as an argument and does not run it.",
+    "quoted-text": "A protected path written inside text a command only prints, sends or writes, against the same text where the command opens it."
   },
   "files": {
     "bad.sh": "#!/bin/sh\nrm -rf /\n",
@@ -123,6 +124,14 @@
     {"id": "data-operand-07", "class": "data-operand", "command": "bash -n data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "project history: data file operands"},
     {"id": "data-operand-08", "class": "data-operand", "command": "bash data.yaml", "cwd": "@ROOT@", "verdict": "block", "source": "control: the same file run as a script"},
     {"id": "data-operand-09", "class": "data-operand", "command": "python3 data.yaml", "cwd": "@ROOT@", "verdict": "block", "source": "control: the same file run as a script"},
-    {"id": "data-operand-10", "class": "data-operand", "command": "bash plain.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "control: a script that holds nothing guarded"}
+    {"id": "data-operand-10", "class": "data-operand", "command": "bash plain.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "control: a script that holds nothing guarded"},
+
+    {"id": "quoted-text-01", "class": "quoted-text", "command": "echo \"notes mention ~/.ssh/id_rsa\"", "cwd": "@HOME@", "verdict": "allow", "source": "control: a path named in text echo only prints"},
+    {"id": "quoted-text-02", "class": "quoted-text", "command": "printf '%s\\n' 'see ~/.ssh/id_rsa notes'", "cwd": "@HOME@", "verdict": "allow", "source": "control: a path named in text printf only prints"},
+    {"id": "quoted-text-03", "class": "quoted-text", "command": "cat > /tmp/dc-notes.md <<'EOF'\nthe file ~/.ssh/id_rsa is guarded\nEOF", "cwd": "@HOME@", "verdict": "allow", "source": "control: a path named in a heredoc body written to a file"},
+    {"id": "quoted-text-04", "class": "quoted-text", "command": "cat \"~/.ssh/id_rsa\"", "cwd": "@HOME@", "verdict": "block", "source": "project history: a quoted path the command opens"},
+    {"id": "quoted-text-05", "class": "quoted-text", "command": "echo \"~/.ssh/id_rsa\" | xargs cat", "cwd": "@HOME@", "verdict": "block", "source": "project history: printed text that another command takes as its operand"},
+    {"id": "quoted-text-06", "class": "quoted-text", "command": "cat > ~/.ssh/authorized_keys <<'EOF'\nkey\nEOF", "cwd": "@HOME@", "verdict": "block", "source": "project history: the file a heredoc body is written to"},
+    {"id": "quoted-text-07", "class": "quoted-text", "command": "bash <<'EOF'\ncat ~/.ssh/id_rsa\nEOF", "cwd": "@HOME@", "verdict": "block", "source": "project history: a heredoc body a shell runs"}
   ]
 }

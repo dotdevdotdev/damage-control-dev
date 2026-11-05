@@ -28,7 +28,7 @@ from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple, Union
 
-from damage_control import audit, nonexec, recipefile, scriptfile, shellexpand
+from damage_control import audit, data_operands, nonexec, recipefile, scriptfile, shellexpand
 from damage_control.profile import GENERIC
 
 
@@ -10854,8 +10854,14 @@ def _decide_rules(
     if first_ask is not None and not concealing:
         return first_ask
 
+    # A guarded path MENTIONED in text a verb only prints, sends or writes is data
+    # (data_operands); a quoted path given to any other verb is still read in full.
+    mention_command = data_operands.mask_data_operands(rule_command)
+    mention_haystacks = haystacks if mention_command == rule_command else [
+        mention_command, *(s for s in normalize_subcommands(mention_command)[0] if s and s != mention_command)
+    ]
     for path in zero_access:
-        if any(matches_path_in_command(path, hay) for hay in haystacks):
+        if any(matches_path_in_command(path, hay) for hay in mention_haystacks):
             if is_command_path_allowed(command, guarded_allowlist(allowed, zero_access), "read"):
                 continue
             return {

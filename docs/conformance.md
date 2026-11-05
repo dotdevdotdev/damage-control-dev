@@ -23,7 +23,8 @@ source says *control* is the same spelling on a harmless command: it must stay a
 | [path-spelling](#path-spelling) | 22 | One protected path written relative, with ~, with a variable or in a brace group. |
 | [script-indirection](#script-indirection) | 8 | The operation held in a file the command runs. |
 | [data-operand](#data-operand) | 10 | Text a file holds, where the command only names the file as an argument and does not run it. |
-| **Total** | 98 | |
+| [quoted-text](#quoted-text) | 7 | A protected path written inside text a command only prints, sends or writes, against the same text where the command opens it. |
+| **Total** | 105 | |
 
 ## quote-splitting
 
@@ -185,6 +186,26 @@ Text a file holds, where the command only names the file as an argument and does
 | `bash data.yaml` | `@ROOT@` | block | control: the same file run as a script |
 | `python3 data.yaml` | `@ROOT@` | block | control: the same file run as a script |
 | `bash plain.yaml` | `@ROOT@` | allow | control: a script that holds nothing guarded |
+
+## quoted-text
+
+A protected path written inside text a command only prints, sends or writes, against the same text where the command opens it.
+
+| Command | Directory | Verdict | Source |
+|---|---|---|---|
+| `echo "notes mention ~/.ssh/id_rsa"` | `@HOME@` | allow | control: a path named in text echo only prints |
+| `printf '%s\n' 'see ~/.ssh/id_rsa notes'` | `@HOME@` | allow | control: a path named in text printf only prints |
+| `cat > /tmp/dc-notes.md <<'EOF'
+the file ~/.ssh/id_rsa is guarded
+EOF` | `@HOME@` | allow | control: a path named in a heredoc body written to a file |
+| `cat "~/.ssh/id_rsa"` | `@HOME@` | block | project history: a quoted path the command opens |
+| `echo "~/.ssh/id_rsa" \| xargs cat` | `@HOME@` | block | project history: printed text that another command takes as its operand |
+| `cat > ~/.ssh/authorized_keys <<'EOF'
+key
+EOF` | `@HOME@` | block | project history: the file a heredoc body is written to |
+| `bash <<'EOF'
+cat ~/.ssh/id_rsa
+EOF` | `@HOME@` | block | project history: a heredoc body a shell runs |
 
 ## Known limits
 
