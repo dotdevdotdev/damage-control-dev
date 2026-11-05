@@ -38,7 +38,7 @@ The rules are tiered: some operations are **blocked**, some **ask** a human firs
 - **Tools with no hook event.** Only the tools in [coverage](coverage.md) are judged. `WebFetch`, `WebSearch`, `Task`/`Agent`, `Skill` and others are not.
 - **Network egress.** Nothing filters outbound connections or what is sent over them. A command that exfiltrates data with a harmless-looking verb is not stopped.
 - **The agent requesting an exception.** An agent that expects a command to be blocked can end it with `# ask: <reason>`. The comment is part of the command text, so the agent writes it, and it grants nothing: a block (a hard block, a read-only, no-delete or zero-access path, a protected command) becomes an `ask`, and the human sees the agent's reason and decides that one command. The ask is not lowered by `bypassPermissions`, `auto` or `acceptEdits`, and in an unattended session it stays a block, whatever `unattended_allow` lists. The control plane ignores the comment. A command that would be allowed is unchanged. The audit row records the reason, the original rule id and that the verdict was raised from `block`. `# allow:` has no effect.
-- **What a script does after the hook read it.** Files a command runs are read once, when the hook runs, and recipes run by `make`, `npm run` and similar are not read at all. See [script indirection](#script-indirection) for the list.
+- **What a script does after the hook read it.** Files a command runs, and the recipes `make`, `npm run` and `just` run, are read once, when the hook runs. See [script indirection](#script-indirection) for what is not read.
 - **Containment and resource limits.** No filesystem sandbox, no CPU, memory or disk quota, no process isolation. Claude Code's own sandbox is the layer that limits what a started command can reach; it is off by default and covers shell commands only. See [pairing with the sandbox](sandbox.md), and run `damage-control-dev doctor` to see whether it is on and whether its unsandboxed retry is open.
 - **Logic errors and bad code.** Code that corrupts data through an application bug looks like any other code.
 - **Supply chain attacks.** A malicious dependency is not a destructive command until something runs it.
@@ -213,12 +213,26 @@ How it works:
 
 Cost: a command that runs no file is judged at the typed speed. Running a file adds time in proportion to its text, because every chunk goes through the full ladder: on an Apple-silicon laptop a hook call takes about 40 ms, a 100-line script brings it to about 70 ms and a dense 9 KB one to about 250 ms. The budget for a command that runs a script is 500 ms. Comments and prose cost less than code. A path under a network or automounted directory adds the filesystem's own lookup time to typed and scripted commands alike.
 
+### Task-runner recipes
+
+`make clean`, `npm test` and `just build` name text that lives in a Makefile, `package.json` or justfile, so judging the command by its name judges an editable label. The recipe is located and judged like a script, under the same size, depth, file and time budgets, and the verdict names the runner, the file and the rule.
+
+- **`make` / `gmake`.** The Makefile in the working directory (or `-C`, or the file named by `-f`; `GNUmakefile`, then `makefile`, then `Makefile`), the named targets and their prerequisites, and one level of `include`. Command-line `NAME=value` operands override the file, as make does. With no target, the default goal is read. A pattern rule is read when the target matches it.
+- **`npm`, `pnpm`, `yarn`, `bun`.** `run <script>`, `test`, `start`, and for `yarn` and `pnpm` a bare script name that is not a built-in command: the nearest `package.json` upward from the directory, the `scripts` entry, and its `pre` and `post` hooks.
+- **`just`.** The nearest justfile upward (or `-f`, `-d`), the named recipes, their dependencies, positional arguments bound to parameters, `{{name}}` interpolation of literals, and shebang recipes judged in the interpreter's language.
+- **Anything unresolved asks.** A variable or function the parser cannot evaluate (`$(shell …)`, a name that comes from the environment), a definition inside a conditional, an `include` of an included file, a computed `-C` or `-f` operand, `make --eval`, a workspace flag (`-w`, `--filter`, `-r`), or a `just` recipe that may live in an imported file is an unverifiable `ask`, id `core.recipe-unverifiable`, which bypass mode does not lower. A finding in the part that was read still wins: a block stays a block. Built-in defaults (`CC`, `CXX`, `RM`, `MAKE`, `AR`) resolve to their usual values, and the automatic variables (`$@`, `$<`, `$^`) resolve per target.
+- **A recipe that is not there is allowed**, as for a missing script: a missing target or script name, no Makefile or package.json, a `package.json` that does not parse. Running it fails.
+- **The comment on the invoking command works as for scripts.** `make clean # ask: reviewed` turns a block into an ask the human decides; `# allow:` has no effect.
+- **Gaps, documented rather than half-parsed.** `task` (Taskfile) needs a YAML parser the standard library does not have. What `make` or `just` evaluate while reading the file (`$(shell …)` in an assignment, backticks in a `just` variable) is not run through the rules. `npm install` lifecycle hooks and `cargo build` scripts are not read. `make -n` is judged as if it ran.
+
+Cost: a typical recipe (a handful of lines) adds less than the noise in a hook call, which takes about 45 to 55 ms end to end on an Apple-silicon laptop; a larger recipe costs what a script of the same size costs, above. The budget for a command that runs a recipe is the same 500 ms.
+
 Expect false positives. The scan applies the typed ladder to scripts, and the ladder blocks `rm -rf build/` typed, so a build script containing it is blocked at run time too. The way through is the same as for a typed command: review the script, then run it with `# ask: <reason>` on the command line and approve the prompt, or put the rule's id in `disabled_rules` in the policy file.
 
 What it does **not** cover:
 
 - **Scripts fetched at run time.** `curl URL | sh` has its own rule. A file downloaded and then run is an `ask` only when the same command names it first.
-- **Recipes run by a tool.** `make`, `just`, `npm run`, `cargo build` scripts and `pip install` hooks run files this scan never sees.
+- **Recipes beyond the runners above.** `task`, `cargo build` scripts, `npm install` lifecycle hooks and `pip install` hooks run text this scan never sees. See [task-runner recipes](#task-runner-recipes).
 - **Binaries**, and any program an interpreter reads from stdin.
 - **Obfuscation and computed commands.** A command assembled at run time, a script that decodes its own payload, a path held in a variable (`bash "$S"`).
 - **Check-then-use.** The file is read when the hook runs. If it changes before the shell reads it, or another process rewrites it in between, the verdict was about different text. A script that rewrites itself, or one a background process edits, is the same case.

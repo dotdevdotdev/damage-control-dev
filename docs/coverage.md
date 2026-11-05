@@ -37,6 +37,9 @@ The file is read when the hook runs; see the [threat model](threat-model.md#scri
 | Other interpreters on a file | node, perl, python, ruby: only the arguments of process-spawning and file-deleting calls are read, and a name bound once to a string literal is followed |
 | Write then run in one command | a body written with `>`, `>>`, `tee`, a heredoc, `echo` or `printf`, then run by path, is judged as written |
 | Script text written with `Write`, `Edit` or `NotebookEdit` | a `#!` line, or an extension in `.bash`, `.cjs`, `.js`, `.ksh`, `.mjs`, `.pl`, `.py`, `.rb`, `.sh`, `.zsh`; a notebook code cell; the finding is an `ask` whatever the typed verdict is |
+| Task-runner recipes | `make` / `gmake` (Makefile, GNUmakefile, makefile; `-C`, `-f`, `NAME=value`; the named targets, their prerequisites and one level of `include`), `npm`, `pnpm`, `yarn` and `bun` (`run`, `test`, `start`, and `yarn` / `pnpm` script names: the `package.json` entry with its `pre` and `post` hooks), `just` (recipes, dependencies, parameters, `{{name}}` values, shebang recipes). The recipe text is judged as a shell script, and the verdict names the runner, the file and the rule |
+
+A recipe that cannot be resolved is an unverifiable `ask`, id `core.recipe-unverifiable`, never an allow: a variable or function the parser cannot evaluate, a conditional that decides a definition, a nested `include`, a workspace flag (`-w`, `--filter`, `-r`), a `just` recipe that may live in an imported file. A recipe that is not there is allowed, because running it fails.
 
 | Limit | Value | When exceeded |
 |---|---|---|
@@ -52,7 +55,7 @@ comment, and a computed verb or a substitution is not asked about. The comment c
 command that runs the script.
 
 **Not covered:** scripts fetched at run time (`curl URL | sh` is its own rule, id `core.fetched-program-pipe`);
-recipes run by a tool (`make`, `just`, `npm run`, `pip install` hooks, `cargo build` scripts); binaries;
+`task` (Taskfile) recipes, which need a YAML parser, and what `make` or `just` evaluate while reading the file (`$(shell …)`, backticks); other recipes run by a tool (`pip install` hooks, `cargo build` scripts, `npm install` lifecycle hooks); binaries;
 interpreters reading their program from stdin; a file that changes between the hook's read and the run;
 obfuscated or computed commands in a script; paths held in variables (`bash "$S"`); scripts run by `find -exec`
 or `xargs`; PowerShell scripts.

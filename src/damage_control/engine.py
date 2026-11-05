@@ -26,9 +26,9 @@ import threading
 import time
 from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
-from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple, Union
 
-from damage_control import audit, scriptfile, shellexpand
+from damage_control import audit, recipefile, scriptfile, shellexpand
 from damage_control.profile import GENERIC
 
 
@@ -10541,7 +10541,10 @@ def _decide_command_text(
         (_decide_command(hidden, config, cwd, _depth + 1, _scan) for hidden in _hidden_commands(command, rules=True)),
         _script_verdicts(command, config, cwd, _scan),
     ):
-        if _DECISION_RANK[inner["decision"]] > _DECISION_RANK[verdict["decision"]] and not inner.get("disabled"):
+        stronger = _DECISION_RANK[inner["decision"]] > _DECISION_RANK[verdict["decision"]] or (
+            inner["decision"] == verdict["decision"] == "ask" and inner.get("unverifiable") and not verdict.get("unverifiable")
+        )  # an ask nothing can verify is not demotable, so it outranks an ask bypass could lower
+        if stronger and not inner.get("disabled"):
             verdict = dict(inner, command=command)
             if verdict["decision"] == "block":
                 return verdict
@@ -11167,7 +11170,9 @@ def check_mcp_tool(tool_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
 #     ``cd`` before it;
 #   * one command that WRITES a file (``> f``, ``>> f``, ``tee f``, a heredoc, ``echo``/``printf``)
 #     and then runs it is judged on the body it writes;
-#   * the Write / Edit / NotebookEdit tools creating script-looking content (``check_script_content``).
+#   * the Write / Edit / NotebookEdit tools creating script-looking content (``check_script_content``);
+#   * a task runner (``make``, ``npm|pnpm|yarn|bun run``, ``just``): the recipe text it will run is located
+#     by ``recipefile`` and judged as a shell script under the same budgets; what cannot be resolved is an ask.
 #
 # A shell script is judged whole, as one command: the ladder already follows ``cd``, ``VAR=x``
 # and heredocs across lines. Other interpreters are reduced to the commands their process-spawning
@@ -11177,8 +11182,8 @@ def check_mcp_tool(tool_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
 # when it must be (unreadable, too large, nested too deep, or produced by this very command from
 # a source nothing can read) is an unverifiable ask.
 #
-# A seatbelt: it reads the file when the hook runs. Not covered — fetched scripts, ``make`` /
-# ``npm run`` / ``just`` recipes, binaries, interpreters reading stdin, obfuscation, and a file that
+# A seatbelt: it reads the file when the hook runs. Not covered — fetched scripts, ``task`` recipes
+# and what ``make`` / ``just`` evaluate at parse time, binaries, interpreters reading stdin, obfuscation, and a file that
 # changes between this read and the run (docs/threat-model.md, "Script indirection").
 
 MAX_SCRIPT_DEPTH = 3  # a script that runs a script that runs a script
@@ -11195,7 +11200,8 @@ _PROGRAM_MAX_LINES = 200
 
 _SCRIPT_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash"})
 _SCRIPT_RUN_HINT = re.compile(
-    r"/|\b(?:source|ash|sh|bash|zsh|dash|ksh|python[\d.]*|pypy[\d.]*|node(?:js)?|bun|deno|perl[\d.]*|ruby[\d.]*)\b"
+    r"/|\b(?:source|ash|sh|bash|zsh|dash|ksh|python[\d.]*|pypy[\d.]*|node(?:js)?|bun|deno|perl[\d.]*|ruby[\d.]*"
+    r"|g?make|just|npm|pnpm|yarn)\b"
     r"|(?:^|[\s;&|(])\.\s"
 )
 _SCRIPT_UNSAFE_PATH = re.compile(r"[$`*?\[{\x00]")
@@ -11362,8 +11368,8 @@ def _candidate_paths(operand: str, bases: List[str]) -> Tuple[str, ...]:
     return tuple(dict.fromkeys(posixpath.normpath(posixpath.join(b, operand)) for b in bases))
 
 
-def _script_refs(command: str, cwd: Optional[str], _depth: int = 0) -> List[_ScriptRef]:
-    """Every file ``command`` runs, in order, with what the same command writes to it first."""
+def _script_refs(command: str, cwd: Optional[str], _depth: int = 0) -> List[Union[_ScriptRef, "recipefile.Run"]]:
+    """Every file ``command`` runs, in order, with what the same command writes to it first; and every task runner it starts."""
     if not _SCRIPT_RUN_HINT.search(command):
         return []
     payload_cwd = posixpath.normpath(cwd) if cwd and os.path.isabs(cwd) else None
@@ -11374,7 +11380,7 @@ def _script_refs(command: str, cwd: Optional[str], _depth: int = 0) -> List[_Scr
     earlier: List[str] = []
     writes: Dict[str, List[Tuple[str, Optional[str]]]] = {}
     piped: Optional[str] = None
-    refs: List[_ScriptRef] = []
+    refs: List[Union[_ScriptRef, recipefile.Run]] = []
     for raw in _segment_raw_words(command):
         argv: List[str] = []
         targets: List[str] = []
@@ -11431,6 +11437,11 @@ def _script_refs(command: str, cwd: Optional[str], _depth: int = 0) -> List[_Scr
                         operand, candidates, found[1], mentioned,
                         tuple(b for c in candidates for b in writes.get(c, ())),
                     ))
+                # ``npm run x``: the wrapper walk treats ``npm`` and ``run`` as launchers, so find the runner word itself
+                at = next((k for k in range(ci + 1) if os.path.basename(argv[k]) in recipefile.RUNNERS), ci)
+                run = recipefile.invocation(*((head, args) if at == ci else (argv[at], argv[at + 1 :])), bases)
+                if run:
+                    refs.append(run)
                 if base in _SCRIPT_SHELLS and _depth < _RESCAN_DEPTH:
                     payload = _eval_shell_invocation(args, False)[0]  # ``sh -c 'sh x.sh'``
                     if payload:
@@ -11819,9 +11830,50 @@ def _judge_file(
 def _script_verdicts(command: str, config: Dict[str, Any], cwd: Optional[str], scan: _ScriptScan) -> Iterator[Dict[str, Any]]:
     """The finding for each file ``command`` runs (see SCRIPT INDIRECTION)."""
     for ref in _script_refs(command, cwd):
-        found = _judge_ref(ref, config, cwd, scan)
+        found = _judge_recipe(ref, config, scan) if isinstance(ref, recipefile.Run) else _judge_ref(ref, config, cwd, scan)
         if found:
             yield found
+
+
+def _judge_recipe(run: "recipefile.Run", config: Dict[str, Any], scan: _ScriptScan) -> Optional[Dict[str, Any]]:
+    """The finding in the recipes a task runner invocation starts (see SCRIPT INDIRECTION): the same budgets as a script."""
+    recipe = recipefile.locate(run)
+    if recipe.status == recipefile.MISSING:
+        return None  # nothing to read: running it fails
+    if recipe.status == recipefile.UNREADABLE:
+        return _script_refusal(f"Recipes for {recipe.label} cannot be read ({recipe.why or 'unreadable'})", "core.script-unreadable")
+    if recipe.status == recipefile.TOO_LARGE:
+        return _script_refusal(f"Recipes for {recipe.label} are in a file too large to analyze safely", "core.script-too-large")
+    if recipe.key in scan.stack:
+        return None  # a recipe that runs itself: its text is being judged already
+    if recipe.key in scan.done:
+        return scan.done[recipe.key]
+    if scan.depth >= MAX_SCRIPT_DEPTH:
+        return _script_refusal(
+            f"{recipe.label} is nested {MAX_SCRIPT_DEPTH} scripts deep — too deep to analyze safely", "core.script-depth"
+        )
+    if scan.files + recipe.nfiles > MAX_SCRIPT_FILES or scan.nbytes + recipe.nbytes > MAX_SCRIPT_TOTAL_BYTES:
+        return _script_refusal(
+            f"This command runs more scripts than can be analyzed safely (reached {recipe.label})", "core.script-budget"
+        )
+    scan.files += recipe.nfiles
+    scan.nbytes += recipe.nbytes
+    scan.stack.append(recipe.key)
+    findings: List[Dict[str, Any]] = []
+    try:
+        for unit in recipe.units:
+            found = _judge_script_text(unit.text, unit.lang, recipe.label, config, recipe.cwd or None, scan)
+            if found:
+                findings.append(found)
+        if recipe.why:
+            findings.append(_script_refusal(
+                f"Recipes for {recipe.label} cannot be fully read ({recipe.why})", "core.recipe-unverifiable"
+            ))
+    finally:
+        scan.stack.pop()
+    out = _strictest(findings)
+    scan.done[recipe.key] = out
+    return out
 
 
 def authoring_language(file_path: str, content: str, notebook: bool = False) -> Optional[str]:
