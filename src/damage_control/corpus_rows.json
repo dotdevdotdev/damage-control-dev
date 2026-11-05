@@ -7,12 +7,15 @@
     "encoded-payload": "A decoded program piped into a shell.",
     "alternative-utility": "A different utility or interpreter one-liner with the same effect.",
     "path-spelling": "One protected path written relative, with ~, with a variable or in a brace group.",
-    "script-indirection": "The operation held in a file the command runs."
+    "script-indirection": "The operation held in a file the command runs.",
+    "data-operand": "Text a file holds, where the command only names the file as an argument and does not run it."
   },
   "files": {
     "bad.sh": "#!/bin/sh\nrm -rf /\n",
     "bad.py": "import os\nos.system('rm -rf /')\n",
-    "clean.sh": "#!/bin/sh\necho hi\n"
+    "clean.sh": "#!/bin/sh\necho hi\n",
+    "data.yaml": "import os\nos.system('rm -rf /')\nrequire('child_process').execSync('rm -rf /');\nrm -rf /\n",
+    "plain.yaml": "name: example\n"
   },
   "rows": [
     {"id": "quote-splitting-01", "class": "quote-splitting", "command": "r\"\"m -rf /", "cwd": "/tmp", "verdict": "block", "source": "GuardFall: quote splitting"},
@@ -110,6 +113,16 @@
     {"id": "script-indirection-05", "class": "script-indirection", "command": "sudo bash @ROOT@/bad.sh", "cwd": "/tmp", "verdict": "block", "source": "project history: script indirection"},
     {"id": "script-indirection-06", "class": "script-indirection", "command": "python3 bad.py", "cwd": "@ROOT@", "verdict": "block", "source": "project history: script indirection"},
     {"id": "script-indirection-07", "class": "script-indirection", "command": "sh -c 'sh bad.sh'", "cwd": "@ROOT@", "verdict": "block", "source": "project history: script indirection"},
-    {"id": "script-indirection-08", "class": "script-indirection", "command": "bash clean.sh", "cwd": "@ROOT@", "verdict": "allow", "source": "control: a script that holds nothing guarded"}
+    {"id": "script-indirection-08", "class": "script-indirection", "command": "bash clean.sh", "cwd": "@ROOT@", "verdict": "allow", "source": "control: a script that holds nothing guarded"},
+    {"id": "data-operand-01", "class": "data-operand", "command": "shasum data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "project history: data file operands"},
+    {"id": "data-operand-02", "class": "data-operand", "command": "cat data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "project history: data file operands"},
+    {"id": "data-operand-03", "class": "data-operand", "command": "diff plain.yaml data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "project history: data file operands"},
+    {"id": "data-operand-04", "class": "data-operand", "command": "node --eval='1' data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "project history: data file operands"},
+    {"id": "data-operand-05", "class": "data-operand", "command": "node --check data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "project history: data file operands"},
+    {"id": "data-operand-06", "class": "data-operand", "command": "python3 --version data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "project history: data file operands"},
+    {"id": "data-operand-07", "class": "data-operand", "command": "bash -n data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "project history: data file operands"},
+    {"id": "data-operand-08", "class": "data-operand", "command": "bash data.yaml", "cwd": "@ROOT@", "verdict": "block", "source": "control: the same file run as a script"},
+    {"id": "data-operand-09", "class": "data-operand", "command": "python3 data.yaml", "cwd": "@ROOT@", "verdict": "block", "source": "control: the same file run as a script"},
+    {"id": "data-operand-10", "class": "data-operand", "command": "bash plain.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "control: a script that holds nothing guarded"}
   ]
 }
