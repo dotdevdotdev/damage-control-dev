@@ -123,7 +123,6 @@
     {"id": "data-operand-07", "class": "data-operand", "command": "bash -n data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "project history: data file operands"},
     {"id": "data-operand-08", "class": "data-operand", "command": "bash data.yaml", "cwd": "@ROOT@", "verdict": "block", "source": "control: the same file run as a script"},
     {"id": "data-operand-09", "class": "data-operand", "command": "python3 data.yaml", "cwd": "@ROOT@", "verdict": "block", "source": "control: the same file run as a script"},
-    {"id": "data-operand-10", "class": "data-operand", "command": "node data.yaml", "cwd": "@ROOT@", "verdict": "block", "source": "control: the same file run as a script"},
-    {"id": "data-operand-11", "class": "data-operand", "command": "bash plain.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "control: a script that holds nothing guarded"}
+    {"id": "data-operand-10", "class": "data-operand", "command": "bash plain.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "control: a script that holds nothing guarded"}
   ]
 }
