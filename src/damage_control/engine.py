@@ -28,7 +28,7 @@ from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple
 
-from damage_control import audit, scriptfile
+from damage_control import audit, scriptfile, shellexpand
 from damage_control.profile import GENERIC
 
 
@@ -10465,6 +10465,42 @@ _DECISION_RANK = {"allow": 0, "ask": 1, "block": 2}
 
 
 def _decide_command(
+    command: str, config: Dict[str, Any], cwd: Optional[str] = None, _depth: int = 0,
+    _scan: Optional["_ScriptScan"] = None,
+) -> Dict[str, Any]:
+    """:func:`_decide_command_text` on ``command`` as typed AND as the shell expands the separator variable.
+
+    ``cat${IFS}file`` runs ``cat file``: the strictest of the two readings wins. A command that
+    also redefines IFS cannot be resolved, so it is an unverifiable ask (never inside a script,
+    where every real file does that and only a positive recognition counts).
+    """
+    verdict = _decide_command_text(command, config, cwd, _depth, _scan)
+    sep = shellexpand.resolve_separator_variable(command)
+    if sep.text == command:
+        return verdict
+    if sep.why:
+        if _scan is not None and _scan.depth > 0:
+            return verdict
+        other = {
+            "decision": "ask",
+            "reason": f"Unverifiable command ({sep.why}) — nothing can analyze what this runs, so a human must confirm it (not demoted by bypass)",
+            "pattern": f"ambiguous:{sep.why}",
+            "command": command,
+            "id": "core.indirect-verb",
+            "unverifiable": True,
+        }
+    else:
+        other = _decide_command_text(sep.text, config, cwd, _depth, _scan)
+    if other.get("protected"):
+        return dict(other, command=command)
+    if verdict.get("disabled") or verdict.get("protected"):
+        return verdict
+    if _DECISION_RANK[other["decision"]] > _DECISION_RANK[verdict["decision"]] and not other.get("disabled"):
+        return dict(other, command=command)
+    return verdict
+
+
+def _decide_command_text(
     command: str, config: Dict[str, Any], cwd: Optional[str] = None, _depth: int = 0,
     _scan: Optional["_ScriptScan"] = None,
 ) -> Dict[str, Any]:
