@@ -194,13 +194,15 @@ A protected path written inside text a command only prints, sends or writes, aga
 | Command | Directory | Verdict | Source |
 |---|---|---|---|
 | `echo "notes mention ~/.ssh/id_rsa"` | `@HOME@` | allow | control: a path named in text echo only prints |
-| `agentwire notify-parent --queued "done, see ~/.ssh/id_rsa notes"` | `@HOME@` | allow | control: a path named in a message sent to a session |
+| `printf '%s\n' 'see ~/.ssh/id_rsa notes'` | `@HOME@` | allow | control: a path named in text printf only prints |
 | `cat > /tmp/dc-notes.md <<'EOF'
 the file ~/.ssh/id_rsa is guarded
 EOF` | `@HOME@` | allow | control: a path named in a heredoc body written to a file |
 | `cat "~/.ssh/id_rsa"` | `@HOME@` | block | project history: a quoted path the command opens |
 | `echo "~/.ssh/id_rsa" \| xargs cat` | `@HOME@` | block | project history: printed text that another command takes as its operand |
-| `agentwire notify-parent --body-file "~/.ssh/id_rsa"` | `@HOME@` | block | project history: the message option that names a file to read |
+| `cat <<'EOF' \| xargs cat
+~/.ssh/id_rsa
+EOF` | `@HOME@` | block | project history: a heredoc body that is piped on as operands |
 | `bash <<'EOF'
 cat ~/.ssh/id_rsa
 EOF` | `@HOME@` | block | project history: a heredoc body a shell runs |

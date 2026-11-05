@@ -127,11 +127,11 @@
     {"id": "data-operand-10", "class": "data-operand", "command": "bash plain.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "control: a script that holds nothing guarded"},
 
     {"id": "quoted-text-01", "class": "quoted-text", "command": "echo \"notes mention ~/.ssh/id_rsa\"", "cwd": "@HOME@", "verdict": "allow", "source": "control: a path named in text echo only prints"},
-    {"id": "quoted-text-02", "class": "quoted-text", "command": "agentwire notify-parent --queued \"done, see ~/.ssh/id_rsa notes\"", "cwd": "@HOME@", "verdict": "allow", "source": "control: a path named in a message sent to a session"},
+    {"id": "quoted-text-02", "class": "quoted-text", "command": "printf '%s\\n' 'see ~/.ssh/id_rsa notes'", "cwd": "@HOME@", "verdict": "allow", "source": "control: a path named in text printf only prints"},
     {"id": "quoted-text-03", "class": "quoted-text", "command": "cat > /tmp/dc-notes.md <<'EOF'\nthe file ~/.ssh/id_rsa is guarded\nEOF", "cwd": "@HOME@", "verdict": "allow", "source": "control: a path named in a heredoc body written to a file"},
     {"id": "quoted-text-04", "class": "quoted-text", "command": "cat \"~/.ssh/id_rsa\"", "cwd": "@HOME@", "verdict": "block", "source": "project history: a quoted path the command opens"},
     {"id": "quoted-text-05", "class": "quoted-text", "command": "echo \"~/.ssh/id_rsa\" | xargs cat", "cwd": "@HOME@", "verdict": "block", "source": "project history: printed text that another command takes as its operand"},
-    {"id": "quoted-text-06", "class": "quoted-text", "command": "agentwire notify-parent --body-file \"~/.ssh/id_rsa\"", "cwd": "@HOME@", "verdict": "block", "source": "project history: the message option that names a file to read"},
+    {"id": "quoted-text-06", "class": "quoted-text", "command": "cat <<'EOF' | xargs cat\n~/.ssh/id_rsa\nEOF", "cwd": "@HOME@", "verdict": "block", "source": "project history: a heredoc body that is piped on as operands"},
     {"id": "quoted-text-07", "class": "quoted-text", "command": "bash <<'EOF'\ncat ~/.ssh/id_rsa\nEOF", "cwd": "@HOME@", "verdict": "block", "source": "project history: a heredoc body a shell runs"}
   ]
 }
