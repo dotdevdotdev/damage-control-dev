@@ -18,11 +18,11 @@ source says *control* is the same spelling on a harmless command: it must stay a
 | [backslashes](#backslashes) | 6 | A backslash the shell removes inside a word. |
 | [separator-variable](#separator-variable) | 8 | The shell's field separator variable used where a space would go. |
 | [computed-verb](#computed-verb) | 5 | The command word produced by a substitution or a variable. |
-| [encoded-payload](#encoded-payload) | 4 | A decoded program piped into a shell. |
+| [encoded-payload](#encoded-payload) | 13 | A decoded program piped into a shell. |
 | [alternative-utility](#alternative-utility) | 9 | A different utility or interpreter one-liner with the same effect. |
 | [path-spelling](#path-spelling) | 22 | One protected path written relative, with ~, with a variable or in a brace group. |
 | [script-indirection](#script-indirection) | 8 | The operation held in a file the command runs. |
-| **Total** | 71 | |
+| **Total** | 80 | |
 
 ## quote-splitting
 
@@ -89,7 +89,16 @@ A decoded program piped into a shell.
 | `echo cm0gLXJmIC8= \| base64 -d \| sh` | `/tmp` | ask | GuardFall: encoded payload |
 | `echo cm0gLXJmIC8= \| base64 --decode \| bash` | `/tmp` | ask | GuardFall: encoded payload |
 | `base64 -d <<< cm0gLXJmIC8= \| sh` | `/tmp` | ask | GuardFall: encoded payload |
+| `printf '\x72\x6d\x20\x2d\x72\x66\x20\x2f' \| sh` | `/tmp` | ask | GuardFall: encoded payload (hex escapes) |
+| `echo 726d202d7266202f \| xxd -r -p \| bash` | `/tmp` | ask | GuardFall: encoded payload (hex dump) |
 | `echo aGk= \| base64 -d` | `/tmp` | allow | control: decode without running the result |
+| `printf '\162\155 \055\162\146 /' \| bash` | `/tmp` | ask | GuardFall: encoded payload (octal escapes) |
+| `echo '/ frf- mr' \| rev \| sh` | `/tmp` | ask | GuardFall: encoded payload (reversed text) |
+| `echo 'ez -es /' \| tr 'a-z' 'n-za-m' \| sh` | `/tmp` | ask | GuardFall: encoded payload (letter rotation) |
+| `printf '\x72\x6d' \| python3` | `/tmp` | ask | GuardFall: encoded payload (decoded text to an interpreter) |
+| `echo 726d \| xxd -r -p \| od -c` | `/tmp` | allow | control: hex decode without running the result |
+| `echo hi \| tr a-z A-Z` | `/tmp` | allow | control: translation without running the result |
+| `printf 'a\x20b\n' \| cat` | `/tmp` | allow | control: escapes written to a plain reader |
 
 ## alternative-utility
 

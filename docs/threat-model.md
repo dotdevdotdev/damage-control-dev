@@ -179,7 +179,7 @@ Shell is hard to analyze statically. The engine does not execute or parse a full
 - **The separator variable:** `cat${IFS}file`, `cat$IFS$9file` and `cat${IFS:0:1}file` run `cat file`, so they get the verdict of the spaced command, in the verb and operand positions and inside a `-c` or `ssh` payload. The shell's default separator list is assumed. A command that reassigns or unsets `IFS`, or transforms it (`${IFS#?}`), is an unverifiable ask; inside a script that is not asked about.
 - **Fetched programs:** a download piped into a shell (`curl … | sh`, `bash <(curl …)`) is blocked with id `core.fetched-program-pipe`. A non-download producer piped into a shell is an unverifiable ask.
 
-What it cannot decide asks rather than guesses: `eval`, base64-to-shell pipelines, a substitution that picks the command, a variable filled at run time. Such an ask carries id `core.ambiguous-command` or `core.indirect-verb`.
+What it cannot decide asks rather than guesses: `eval`, decoded text piped to a shell or interpreter (base64, `printf` hex or octal escapes, `xxd -r`, `rev`, a `tr` translation), a substitution that picks the command, a variable filled at run time. Such an ask carries id `core.ambiguous-command` or `core.indirect-verb`.
 
 ### Declared residuals
 
