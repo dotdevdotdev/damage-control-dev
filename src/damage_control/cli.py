@@ -6,6 +6,7 @@
     damage-control-dev uninstall [--purge]
     damage-control-dev check "<command>"    # what would the hook decide?
     damage-control-dev rules                # the enforced rule ids
+    damage-control-dev corpus run [--json]  # replay the conformance corpus through the real hook
     damage-control-dev packs|groups list|enable|disable [name]
 
 Exit status: 0 = fine, 1 = a refusal or a finding marked ``[!!]``, 2 = bad usage.
@@ -17,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from damage_control import __version__, engine, install, packs, sandbox
+from damage_control import __version__, corpus, engine, install, packs, sandbox
 from damage_control import claude_code as cc
 from damage_control import harness_config as hc
 from damage_control.profile import ProfileError, load_profile
@@ -67,6 +68,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profile", metavar="PATH")
     p.add_argument("--json", action="store_true")
 
+    p = sub.add_parser("corpus", help="replay the conformance corpus through the real hook")
+    p.add_argument("action", choices=["run"])
+    p.add_argument("--json", action="store_true")
+
     for noun in ("packs", "groups"):
         p = sub.add_parser(noun, help=f"list, enable or disable {noun} (enable/disable: human terminal only)")
         p.add_argument("--profile", metavar="PATH")
@@ -111,6 +116,18 @@ def _cmd_rules(args: argparse.Namespace) -> int:
         for r in rows:
             print(f"{r['tier']:5} {r['id']}  ({r['source']})")
     return 0
+
+
+def _cmd_corpus(args: argparse.Namespace) -> int:
+    data = corpus.load()
+    results = corpus.replay(data)
+    if args.json:
+        print(json.dumps({"ok": all(r["ok"] for r in results),
+                          "classes": [{"class": c, "passed": p, "total": t} for c, p, t in corpus.summarize(results, data["classes"])],
+                          "failures": [r for r in results if not r["ok"]]}, indent=2))
+    else:
+        print(corpus.table(results, data["classes"]))
+    return 0 if all(r["ok"] for r in results) else 1
 
 
 def _cmd_pack_group(args: argparse.Namespace) -> int:
@@ -158,6 +175,8 @@ def run(args: argparse.Namespace) -> int:
         return _cmd_check(args)
     if command == "rules":
         return _cmd_rules(args)
+    if command == "corpus":
+        return _cmd_corpus(args)
     return _cmd_pack_group(args)
 
 

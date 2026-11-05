@@ -40,6 +40,7 @@ path = "src/damage_control/__init__.py"
 packages = ["src/damage_control"]
 include = [
     "src/damage_control/**/*.py",
+    "src/damage_control/corpus_rows.json",
     "src/damage_control/rules/*.json",
     "src/damage_control/rules/*.yaml",
     "src/damage_control/tooldefs/*.json",

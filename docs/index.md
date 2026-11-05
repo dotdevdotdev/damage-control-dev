@@ -8,6 +8,7 @@ Start with the [README](../README.md) for install and the commands you will use 
 |---|---|
 | [Threat model](threat-model.md) | What it catches, what it does not, where it fails open, and how to report a bypass. |
 | [Coverage](coverage.md) | Which Claude Code tools are judged, and whether each can block, ask, or both. Generated from the code. |
+| [Conformance](conformance.md) | The replayable corpus of respelled commands, with the verdict each gets. Generated from the corpus; `damage-control-dev corpus run` replays it. |
 | [Sandbox pairing](sandbox.md) | How the hook and Claude Code's sandbox cover each other's gaps; a recommended settings snippet; what `doctor` reports. |
 | [Rule authoring](rule-authoring.md) | Writing rules, tooldefs and path lists; the policy file; groups and packs; the path allowlist. |
 | [Extending](extending.md) | Host profiles, how the hook is registered and why it fails closed, break-glass, the installer. |

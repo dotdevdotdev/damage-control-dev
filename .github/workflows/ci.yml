@@ -22,9 +22,13 @@ jobs:
         run: |
           python -m pip install .
           python tools/coverage_matrix.py --check
+      - name: docs/conformance.md is up to date with the corpus
+        run: python tools/conformance_doc.py --check
+      - name: Every conformance row gets its recorded verdict from the real hook
+        run: damage-control-dev corpus run
       - name: No host-specific text or dangling issue numbers in the docs
         run: |
-          if grep -rniE 'agentwire|#[0-9]{3,}|\b(secure|safe)\b' docs/threat-model.md docs/rule-authoring.md docs/coverage.md docs/index.md docs/sandbox.md; then exit 1; fi
+          if grep -rniE 'agentwire|#[0-9]{3,}|\b(secure|safe)\b' docs/threat-model.md docs/rule-authoring.md docs/coverage.md docs/index.md docs/sandbox.md docs/conformance.md; then exit 1; fi
           # extending.md may name AgentWire once, in its labelled example section
           test "$(grep -ci agentwire docs/extending.md)" -le 3
           if grep -nE '#[0-9]{3,}' docs/extending.md; then exit 1; fi
