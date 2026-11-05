@@ -90,12 +90,12 @@ def scratch(files: Dict[str, str]) -> Iterator[Tuple[Path, Callable[[str], str]]
         yield home, sub
 
 
-def replay(data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Run every row; each result is the row plus ``got`` and ``ok``."""
+def replay(data: Dict[str, Any], judge: Callable[[str, str, Path], str] = _hook) -> List[Dict[str, Any]]:
+    """Run every row through ``judge(command, cwd, home)``; each result is the row plus ``got`` and ``ok``."""
     results = []
     with scratch(data.get("files", {})) as (home, sub):
         for row in data["rows"]:
-            got = _hook(sub(row["command"]), sub(row["cwd"]), home)
+            got = judge(sub(row["command"]), sub(row["cwd"]), home)
             results.append({**row, "got": got, "ok": got == row["verdict"]})
     return results
 
