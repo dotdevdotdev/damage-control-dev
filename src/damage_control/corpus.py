@@ -15,9 +15,10 @@ import os
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Tuple
 
 VERDICTS = ("block", "ask", "allow")
 ROW_KEYS = {"id", "class", "command", "cwd", "verdict", "source"}
@@ -73,19 +74,26 @@ def _hook(command: str, cwd: str, home: Path) -> str:
     return json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"] if proc.stdout.strip() else "allow"
 
 
-def replay(data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Run every row; each result is the row plus ``got`` and ``ok``."""
-    results = []
+@contextmanager
+def scratch(files: Dict[str, str]) -> Iterator[Tuple[Path, Callable[[str], str]]]:
+    """A throwaway home and file tree: yields ``(home, sub)`` where ``sub`` fills in ``@HOME@`` / ``@ROOT@``."""
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(os.path.realpath(tmp))
         home, root = base / "home", base / "tree"
         home.mkdir()
         root.mkdir()
-        _build_tree(data.get("files", {}), root)
+        _build_tree(files, root)
 
         def sub(text: str) -> str:
             return text.replace("@HOME@", str(home)).replace("@ROOT@", str(root))
 
+        yield home, sub
+
+
+def replay(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Run every row; each result is the row plus ``got`` and ``ok``."""
+    results = []
+    with scratch(data.get("files", {})) as (home, sub):
         for row in data["rows"]:
             got = _hook(sub(row["command"]), sub(row["cwd"]), home)
             results.append({**row, "got": got, "ok": got == row["verdict"]})
