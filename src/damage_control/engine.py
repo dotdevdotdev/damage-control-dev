@@ -28,7 +28,7 @@ from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple, Union
 
-from damage_control import audit, data_operands, explain, nonexec, optiongrammar, recipefile, scriptfile, shellexpand
+from damage_control import audit, data_operands, explain, gitops, nonexec, optiongrammar, recipefile, scriptfile, shellexpand
 from damage_control.profile import GENERIC
 
 
@@ -4761,9 +4761,7 @@ def _tar_payloads(args: List[str]) -> List[str]:
     return out
 
 
-_GIT_GLOBAL_VALUE_OPTS = frozenset({
-    "-c", "-C", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix", "--config-env",
-})
+_GIT_GLOBAL_VALUE_OPTS = gitops.GLOBAL_VALUE_OPTS
 _GIT_REMOTE_PROGRAM_SUBS = frozenset({"fetch", "pull", "clone", "push", "ls-remote", "archive", "remote", "submodule"})
 _GIT_FILTER_OPTS = (
     "--env-filter", "--tree-filter", "--index-filter", "--parent-filter", "--msg-filter",
@@ -4924,6 +4922,18 @@ def _inner_hidden(payload: str, rules: bool, depth: int) -> List[str]:
     )
 
 
+def _feeder_git_args(words: List[str]) -> Optional[List[str]]:
+    """The argv after ``git`` in ``xargs … git …`` / ``parallel … git …``, else None: the feeder appends its input to it."""
+    base = [w.rsplit("/", 1)[-1] for w in words]
+    for i, name in enumerate(base):
+        if name in _FEEDERS:
+            for j in range(i + 1, len(base)):
+                if base[j] == "git":
+                    return words[j + 1 :]
+            return None
+    return None
+
+
 def _exec_payload_commands(command: str, rules: bool = False, _depth: int = 0) -> List[str]:
     """Commands that the tools in ``command`` run from option values or embedded programs."""
     if _depth > _RESCAN_DEPTH:
@@ -4931,6 +4941,9 @@ def _exec_payload_commands(command: str, rules: bool = False, _depth: int = 0) -
     out: List[str] = []
     for words in _segment_raw_words(command):
         base, args = _exec_tool(words)
+        fed = _feeder_git_args(words)
+        if fed is not None:
+            out += gitops.commands(fed, assembled=True)
         if base in ("sed", "gsed"):
             out += _sed_payloads(args)
         elif base in ("awk", "gawk", "mawk"):
@@ -4938,7 +4951,7 @@ def _exec_payload_commands(command: str, rules: bool = False, _depth: int = 0) -
         elif base in ("tar", "gtar", "bsdtar"):
             out += _tar_payloads(args)
         elif base == "git":
-            out += _git_payloads(args)
+            out += _git_payloads(args) + gitops.commands(args)
         elif base in ("npm", "npx"):
             out += _npm_payloads(base, args)
         elif base in ("ssh", "scp", "sftp"):

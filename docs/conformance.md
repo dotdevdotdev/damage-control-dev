@@ -24,7 +24,8 @@ source says *control* is the same spelling on a harmless command: it must stay a
 | [script-indirection](#script-indirection) | 20 | The operation held in a file the command runs. |
 | [data-operand](#data-operand) | 13 | Text a file holds, where the command only names the file as an argument and does not run it. |
 | [quoted-text](#quoted-text) | 7 | A protected path written inside text a command only prints, sends or writes, against the same text where the command opens it. |
-| **Total** | 130 | |
+| [option-spelling](#option-spelling) | 29 | An option of a command that discards uncommitted work written as an abbreviation, a cluster, a negated form or an alias, or left to run time. |
+| **Total** | 159 | |
 
 ## quote-splitting
 
@@ -231,6 +232,42 @@ EOF` | `@HOME@` | block | project history: the file a heredoc body is written to
 | `bash <<'EOF'
 cat ~/.ssh/id_rsa
 EOF` | `@HOME@` | block | project history: a heredoc body a shell runs |
+
+## option-spelling
+
+An option of a command that discards uncommitted work written as an abbreviation, a cluster, a negated form or an alias, or left to run time.
+
+| Command | Directory | Verdict | Source |
+|---|---|---|---|
+| `git reset --har` | `/tmp` | block | abbreviation of --hard |
+| `git reset --h` | `/tmp` | block | shortest abbreviation of --hard |
+| `git -C . reset --ha` | `/tmp` | block | abbreviation behind a global option |
+| `git clean --for` | `/tmp` | block | abbreviation of --force |
+| `git clean -n --no-dry-run -f` | `/tmp` | block | a negated dry run |
+| `git -c alias.x='reset --hard' x` | `/tmp` | block | alias naming the operation |
+| `git -c alias.a=b -c alias.b='clean -f' a` | `/tmp` | block | alias chain |
+| `git switch -f main` | `/tmp` | ask | short form of --discard-changes |
+| `git switch --discard main` | `/tmp` | ask | abbreviation of --discard-changes |
+| `git switch -fc newbranch` | `/tmp` | ask | short-option cluster |
+| `git restore --worktree .` | `/tmp` | ask | explicit working-tree restore |
+| `git restore -SW .` | `/tmp` | ask | short-option cluster restoring both |
+| `git restore --source=HEAD --staged --worktree .` | `/tmp` | ask | restore from a tree into both |
+| `git restore '*'` | `/tmp` | ask | whole-tree pathspec |
+| `git restore ':(top)*'` | `/tmp` | ask | whole-tree pathspec magic |
+| `git worktree remove --force ../wt` | `/tmp` | ask | forced removal of a worktree |
+| `git worktree remove --fo ../wt` | `/tmp` | ask | abbreviated forced removal |
+| `git -c alias.x='switch -f' x main` | `/tmp` | ask | alias naming the operation |
+| `echo --hard \| xargs git reset` | `/tmp` | ask | options assembled at run time |
+| `git reset --soft HEAD~1` | `/tmp` | allow | control: soft reset |
+| `git reset --so HEAD~1` | `/tmp` | allow | control: abbreviated soft reset |
+| `git clean -n` | `/tmp` | allow | control: dry run |
+| `git clean --d --for` | `/tmp` | allow | control: abbreviated dry run with abbreviated force |
+| `git switch main` | `/tmp` | allow | control: plain switch |
+| `git switch --no-discard-changes main` | `/tmp` | allow | control: negated option |
+| `git restore --staged .` | `/tmp` | allow | control: index-only restore |
+| `git restore file.txt` | `/tmp` | allow | control: one file |
+| `git worktree remove ../wt` | `/tmp` | allow | control: removal without force |
+| `echo 'git reset --har; git clean --for; git restore -W .'` | `/tmp` | allow | control: text that only mentions the operations |
 
 ## Known limits
 
