@@ -39,11 +39,11 @@ CASES = [
     (FAKE_HOME + "/.claude", "rm notes.txt", "block"),
     (FAKE_HOME, "echo x >> .bash_history", "block"),
     (ELSEWHERE, "cd ~ && cat .ssh/id_rsa", "block"),
-    # what a relative name means depends on where it runs
-    (ELSEWHERE, "echo x > .claude/settings.json", "allow"),
+    # what a relative name means depends on where it runs: elsewhere it is a project settings file, which asks
+    (ELSEWHERE, "echo x > .claude/settings.json", "ask"),
     (ELSEWHERE, "cat .ssh/id_rsa", "allow"),
     (ELSEWHERE, "rm .claude/notes.txt", "allow"),
-    (FAKE_HOME, "cd " + ELSEWHERE + " && echo x > .claude/settings.json", "allow"),
+    (FAKE_HOME, "cd " + ELSEWHERE + " && echo x > .claude/settings.json", "ask"),
 ]
 
 

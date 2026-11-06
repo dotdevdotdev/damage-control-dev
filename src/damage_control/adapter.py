@@ -123,8 +123,10 @@ def parse_payload(payload: Dict[str, Any], tools: Optional[Dict[str, Tuple[str, 
     content = tool_input.get(CONTENT_FIELDS.get(tool_name, ""), "")
     if tool_name == "NotebookEdit" and tool_input.get("cell_type") == "markdown":
         content = ""
+    old = tool_input.get("old_string", "") if tool_name == "Edit" else ""
     return tool_call(kind, tool_name, paths=(value,), cwd=payload.get("cwd"),
-                     content=content if isinstance(content, str) else ""), ctx
+                     content=content if isinstance(content, str) else "",
+                     old=old if isinstance(old, str) else "", replace_all=tool_input.get("replace_all") is True), ctx
 
 
 def notify_unattended_block(engine: Any, subject: str, reason: str, rule_id: Optional[str]) -> None:

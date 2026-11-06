@@ -28,7 +28,7 @@ from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple, Union
 
-from damage_control import audit, data_operands, explain, gitops, nonexec, optiongrammar, recipefile, scriptfile, shellexpand
+from damage_control import audit, configguard, data_operands, explain, gitops, nonexec, optiongrammar, recipefile, scriptfile, shellexpand
 from damage_control.profile import GENERIC
 
 
@@ -6291,12 +6291,12 @@ def _cwd_realpath_variants(command: str) -> List[str]:
 
 
 def _guarded_path_test(config: Dict[str, Any]) -> Callable[[str], bool]:
-    """Whether an absolute path is guarded by ANY class: control plane, zero-access, read-only, no-delete.
+    """Whether an absolute path is guarded by ANY class: control plane, settings file, zero-access, read-only, no-delete.
 
     One test per distinct set of lists (and home, and control plane), remembering its answers: a command
     asks about each word it holds, and a script asks about the same few hundred words chunk after chunk.
     """
-    patterns = tuple(
+    patterns = configguard.SETTINGS_FILE_GLOBS + tuple(
         p
         for key in ("zeroAccessPaths", "readOnlyPaths", "noDeletePaths")
         for p in (config.get(key) or [])
@@ -10950,6 +10950,24 @@ def _decide_rules(
                 "command": command,
             }
 
+    # A write to a Claude Code settings file whose content the hook cannot know (a redirect, ``tee``,
+    # ``sed -i``, ``jq ... > file``, a copy or move over it, a script that does one of those): the file
+    # may set ``disableAllHooks`` or rewrite ``hooks``. A human decides, and bypass does not lift it.
+    for glob_path in configguard.SETTINGS_FILE_GLOBS:
+        if any(check_path_patterns(hay, glob_path, READ_ONLY_BLOCKED, "settings file")[0]
+               for hay in path_ladder_haystacks(command, glob_path)):
+            return {
+                "decision": "ask",
+                "reason": (f"Write to a Claude Code settings file ({glob_path}) — it may set `disableAllHooks` or rewrite "
+                           "`hooks`, and the content cannot be read from a shell command; a human must confirm it "
+                           "(not demoted by bypass)"),
+                "pattern": f"settingsWrite: {glob_path}",
+                "id": configguard.WRITE_RULE_ID,
+                "command": command,
+                "unverifiable": True,
+                "recognized": True,  # the write is plain to see, so a script holding it counts too
+            }
+
     for path in no_delete:
         fed = producer_fed_hit(scan, path, NO_DELETE_BLOCKED, cwd)
         moved = move_overwrite_hit(scan, path, cwd)
@@ -11703,8 +11721,8 @@ def _script_finding(inner: Dict[str, Any], label: str, authoring: bool = False) 
     """``inner`` (the verdict on a script's text) as a verdict on the command that runs it; None when nothing was found."""
     if inner["decision"] == "allow" or inner.get("disabled"):
         return None
-    if inner.get("unverifiable") and not inner.get("scriptscan"):
-        return None
+    if inner.get("unverifiable") and not inner.get("scriptscan") and not inner.get("recognized"):
+        return None  # a computed verb or a substitution: every real script has them
     where = f"script content for {label}" if authoring else f"script {label}"
     out = dict(inner)
     out["reason"] = f"{inner['reason']} [in {where}; rule {inner.get('id')}]"
