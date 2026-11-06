@@ -35,6 +35,7 @@ class Respelling(NamedTuple):
     cwd: str
     verdict: str
     plain: str
+    tool: str = "Bash"
 
 
 def _plain_words(command: str) -> List[int]:
@@ -165,7 +166,7 @@ def generate(rows: List[Dict[str, Any]], n: int = DEFAULT_N, seed: int = DEFAULT
         for family, make in FAMILIES.items():
             variants = sorted({v for v in make(row["command"], row["cwd"], rng) if v != row["command"]})
             rng.shuffle(variants)
-            found = [Respelling(row["id"], family, v, row["cwd"], row["verdict"], row["command"]) for v in variants]
+            found = [Respelling(row["id"], family, v, row["cwd"], row["verdict"], row["command"], row.get("tool", "Bash")) for v in variants]
             found = [r for r in found if not (exclude and exclude(r))]
             if found:
                 pools.append(found)
@@ -190,7 +191,7 @@ def replay(data: Dict[str, Any], respellings: List[Respelling], seed: int = DEFA
            workers: int = 8) -> Dict[str, Any]:
     with corpus.scratch(data.get("files", {})) as (home, sub):
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            got = list(pool.map(lambda r: corpus._hook(sub(r.command), sub(r.cwd), home), respellings))
+            got = list(pool.map(lambda r: corpus._hook(sub(r.command), sub(r.cwd), home, r.tool), respellings))
     mismatches = [{**r._asdict(), "got": g} for r, g in zip(respellings, got) if g != r.verdict]
     return {"count": len(respellings), "seed": seed, "mismatches": mismatches}
 

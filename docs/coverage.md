@@ -10,19 +10,47 @@ CI fails if the committed file is stale. Regenerate with `python tools/coverage_
 |---|---|---|---|---|---|
 | `Bash` | `bash` | the command line | yes | yes | yes |
 | `PowerShell` | `bash` | the command line | yes | yes | yes |
+| `Monitor` | `bash` | the command line | yes | yes | yes |
 | `Edit` | `edit` | the path in `file_path` / `notebook_path`, and script-looking text in `new_string` | yes | yes | yes |
 | `NotebookEdit` | `edit` | the path in `file_path` / `notebook_path`, and script-looking text in `new_source` | yes | yes | yes |
 | `Write` | `write` | the path in `file_path`, and script-looking text in `content` | yes | yes | yes |
 | `Read` | `read` | the path in `file_path` | yes | no | yes |
 | `Grep` | `read` | the path in `path` | yes | no | yes |
 | `Glob` | `read` | the path in `path` | yes | no | yes |
+| `LSP` | `read` | the path in `filePath` | yes | no | yes |
 | `mcp__.*` | `mcp` | the tool name and its path-valued arguments, plus, where a host profile maps the tool, the shell command it runs | yes | yes | yes |
 
 `Ask` is *no* for the read tools: a path is either allowed or blocked. An `ask` outside an attended
 session becomes a block (unattended) or an allow (bypass permission mode) -- except an `unverifiable`
 one, which bypass never demotes.
 
-**Unsupported (no hook is registered, so nothing is judged):** `WebFetch`, `WebSearch`, `Task`, `Agent`, `Skill`, `Monitor`, `TodoWrite`, `AskUserQuestion`.
+## Decision per tool
+
+Every built-in tool name Claude Code is known to have, with whether it can do harm the judged tools cannot,
+and the decision. A tool listed *out of scope* has no hook registered, so nothing is judged for it.
+The names were observed in Claude Code 2.1.319 from its binary and the hook-input schema it validates, not from
+a live session. A test holds this table to the registered matchers; a tool Claude Code adds later is
+missing until someone reviews it and adds a row to `src/damage_control/toolcoverage.py`.
+
+| Tool | Can it do harm | Decision | Reason |
+|---|---|---|---|
+| `Bash`, `PowerShell` | runs any command | judged | the rules judge the command line |
+| `Monitor` | runs a command in the background and streams its output | judged | the `command` field is a shell command, judged by the same rules as Bash. A `url` monitor (a WebSocket opened by Claude Code) has no command and is not judged |
+| `Edit`, `NotebookEdit`, `Write` | changes any file the user can | judged | the target path is judged, and script-looking text is asked about |
+| `Read`, `Grep`, `Glob` | reads file contents or lists names | judged | the path is judged |
+| `LSP` | returns symbols, documentation and call sites of the file named in `filePath` | judged | reads a file by path like Read does, so the same path ladder applies |
+| `mcp__.*` | whatever the server offers | judged | the tool name and its path-valued arguments are judged; a host profile can map a tool to the command it runs |
+| `WebFetch`, `WebSearch` | sends text out in the URL or the query, and brings page text back | out of scope | the engine has no egress policy, for Bash `curl` either, and a URL or query that carries data is indistinguishable from one that does not. Claude Code refuses private and local hosts for WebFetch itself, and its permission rules limit domains. Returned text is untrusted input, not an action |
+| `Agent (alias Task)`, `Workflow` | starts a subagent with a prompt of the model's choosing | out of scope | the child's own tool calls reach the hooks: the hook input carries `agent_id` for a call made inside a subagent (from the hook-input schema in the binary; not observed in a live session). The prompt is text, not an action |
+| `Skill` | loads the instructions of a named skill into the conversation | out of scope | it runs nothing itself; what the instructions then do goes through the judged tools, and the skill directories are part of the protected control plane |
+| `SendMessage`, `SubagentHandback`, `SendUserMessage (alias Brief)`, `SendUserFile`, `PushNotification` | tells the user or another agent something, or attaches a file for the user | out of scope | the recipient is the user or an agent in the same session; nothing leaves for a third party |
+| `AskUserQuestion`, `EnterPlanMode`, `ExitPlanMode` | nothing: they ask the user or switch the permission mode toward more questions | out of scope | the user decides, and nothing is read or written |
+| `TodoWrite`, `TaskCreate`, `TaskUpdate`, `TaskGet`, `TaskList`, `TaskStop (alias KillShell`, `KillBash)` | nothing beyond bookkeeping in the session; TaskStop ends a background task | out of scope | no file, command or network access |
+| `EnterWorktree`, `ExitWorktree` | creates or leaves a git worktree and changes the working directory | out of scope | the commands that follow are judged against the new directory; creating a worktree does not delete or overwrite anything |
+| `CronCreate`, `CronDelete`, `CronList`, `ScheduleWakeup` | queues a prompt to run later | out of scope | the prompt is text, and what it does when it runs goes through the judged tools |
+| `RemoteTrigger` | manages scheduled remote agents (routines) through the claude.ai API | out of scope | it acts on the user's account, not on this machine; the routine is a prompt run elsewhere, outside these hooks |
+| `ToolSearch`, `ListMcpResourcesTool`, `ReadMcpResourceTool`, `ReadMcpResourceDirTool` | lists tool schemas, or reads a resource an MCP server exposes by URI | out of scope | a URI names a server resource, not a local path; the server is the party to trust or not |
+| `REPL (alias Eval)` | evaluates code inside Claude Code | out of scope | feature-gated: the name is in the binary, and its input shape was not observed. Revisit when it can be exercised; until then the claim is only that it was seen, not that it is harmless |
 
 ## Script indirection
 

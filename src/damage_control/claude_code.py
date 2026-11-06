@@ -24,16 +24,18 @@ HARNESS = "claude-code"
 ONFAILURE_MIN_VERSION = (2, 1, 295)
 
 # matcher -> hook kind. Several matchers share a kind (Read/Grep/Glob), PowerShell is a
-# separate tool name with Bash's input shape.
+# separate tool name with Bash's input shape, and so is Monitor (its ``command`` runs in the background).
 MATCHERS: Dict[str, str] = {
     "Bash": "bash",
     "PowerShell": "bash",
+    "Monitor": "bash",
     "Edit": "edit",
     "NotebookEdit": "edit",
     "Write": "write",
     "Read": "read",
     "Grep": "read",
     "Glob": "read",
+    "LSP": "read",
     "mcp__.*": "mcp",
 }
 
