@@ -52,6 +52,12 @@ missing until someone reviews it and adds a row to `src/damage_control/toolcover
 | `ToolSearch`, `ListMcpResourcesTool`, `ReadMcpResourceTool`, `ReadMcpResourceDirTool` | lists tool schemas, or reads a resource an MCP server exposes by URI | out of scope | a URI names a server resource, not a local path; the server is the party to trust or not |
 | `REPL (alias Eval)` | evaluates code inside Claude Code | out of scope | feature-gated: the name is in the binary, and its input shape was not observed. Revisit when it can be exercised; until then the claim is only that it was seen, not that it is harmless |
 
+## Settings changes
+
+One `ConfigChange` hook (kind `config`) judges a changed settings file, whatever wrote it;
+see the [settings-change guard](config-change.md). Sources: `user_settings`, `project_settings`, `local_settings`, `policy_settings`. A change to a skill file is not judged.
+A block stops the change applying to the running session; a managed-policy change cannot be blocked and is audited as observed.
+
 ## Script indirection
 
 A command that runs a file is judged on the file's text as well, by the same rules as a typed command.

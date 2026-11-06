@@ -61,6 +61,10 @@ HOOK_KINDS: Dict[str, Tuple[_Tools, bool]] = {
 }
 
 
+# The ConfigChange hook has no tool table: its payload names a changed settings file (``configguard``).
+CONFIG_KIND = "config"
+
+
 class HookUsageError(ValueError):
     """The hook was invoked with arguments it does not understand. Blocks, like any hook failure."""
 
@@ -75,14 +79,15 @@ def parse_args(argv: List[str]) -> Tuple[str, Optional[str]]:
             raise HookUsageError("--profile needs a path")
         profile = args[i + 1]
         del args[i:i + 2]
-    if len(args) != 1 or args[0] not in HOOK_KINDS:
-        raise HookUsageError(f"usage: hook {{{'|'.join(HOOK_KINDS)}}} [--profile PATH]; got {argv!r}")
+    kinds = (*HOOK_KINDS, CONFIG_KIND)
+    if len(args) != 1 or args[0] not in kinds:
+        raise HookUsageError(f"usage: hook {{{'|'.join(kinds)}}} [--profile PATH]; got {argv!r}")
     return args[0], profile
 
 
 def hook_namespace() -> Any:
     """What ``Guard`` and ``render`` reach engine functions and audit writers through."""
-    names = {n: getattr(audit, n) for n in ("log_allowed", "log_asked", "log_blocked", "log_disabled")}
+    names = {n: getattr(audit, n) for n in ("log_allowed", "log_asked", "log_blocked", "log_disabled", "log_observed")}
     return types.SimpleNamespace(**{**vars(engine), **names})
 
 
@@ -168,6 +173,16 @@ def render(verdict: Any, engine: Any) -> None:
     sys.exit(0)
 
 
+def decide_config_change(namespace: Any) -> None:
+    """Judge one ``ConfigChange`` payload and exit. Reads the install record to know which files hold our registration."""
+    from damage_control import configguard, install
+
+    payload = namespace.read_hook_input()
+    audit.HOOK_INPUT = payload
+    render(configguard.decide(payload, namespace.PROFILE, install.recorded_registration,
+                              install.registration_problems), namespace)
+
+
 def run_hook(argv: List[str]) -> None:
     """The hook entry: parse the arguments, install the profile, judge one payload, exit.
 
@@ -180,6 +195,9 @@ def run_hook(argv: List[str]) -> None:
         if profile_path:
             engine.install_profile(load_profile(Path(profile_path)))
         namespace = hook_namespace()
+        if kind == CONFIG_KIND:
+            decide_config_change(namespace)
+            return
         tools, tooldefs = HOOK_KINDS[kind]
         guard = Guard(namespace.load_effective_config(tooldefs), namespace)
         call, ctx = parse_payload(namespace.read_hook_input(), tools, namespace)

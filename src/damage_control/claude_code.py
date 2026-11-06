@@ -39,6 +39,19 @@ MATCHERS: Dict[str, str] = {
     "mcp__.*": "mcp",
 }
 
+# The ConfigChange hook fires when a settings file or a skill file changes and can stop the change
+# applying to the running session. Skill files cannot loosen this guard, so only the four settings
+# sources are registered. One entry, one kind, no per-source split.
+CONFIG_EVENT = "ConfigChange"
+CONFIG_KIND = "config"
+CONFIG_SOURCES = ("user_settings", "project_settings", "local_settings", "policy_settings")
+CONFIG_MATCHERS: Dict[str, str] = {"|".join(CONFIG_SOURCES): CONFIG_KIND}
+
+PRE_TOOL_USE = "PreToolUse"
+
+# event -> matcher -> hook kind: every registration of ours.
+EVENTS: Dict[str, Dict[str, str]] = {PRE_TOOL_USE: MATCHERS, CONFIG_EVENT: CONFIG_MATCHERS}
+
 SCOPES = ("user", "project", "managed")
 
 
@@ -104,32 +117,35 @@ def kind_of(hook: Dict[str, Any]) -> Optional[str]:
 
 
 class Owned(NamedTuple):
+    event: str
     matcher: Any
     hook: Dict[str, Any]
 
 
-def pre_tool_use(settings: Dict[str, Any]) -> Optional[List[Any]]:
+def event_entries(settings: Dict[str, Any], event: str) -> Optional[List[Any]]:
     hooks = settings.get("hooks")
-    pre = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
-    return pre if isinstance(pre, list) else None
+    entries = hooks.get(event) if isinstance(hooks, dict) else None
+    return entries if isinstance(entries, list) else None
 
 
 def owned_entries(settings: Dict[str, Any]) -> List[Owned]:
-    """Every hook of ours in ``settings``, with the matcher it sits under. Malformed entries are skipped."""
+    """Every hook of ours in ``settings``, with its event and matcher. Malformed entries are skipped."""
     found: List[Owned] = []
-    for entry in pre_tool_use(settings) or []:
-        inner = entry.get("hooks") if isinstance(entry, dict) else None
-        if isinstance(inner, list):
-            found.extend(Owned(entry.get("matcher"), h) for h in inner if is_ours(h))
+    for event in EVENTS:
+        for entry in event_entries(settings, event) or []:
+            inner = entry.get("hooks") if isinstance(entry, dict) else None
+            if isinstance(inner, list):
+                found.extend(Owned(event, entry.get("matcher"), h) for h in inner if is_ours(h))
     return found
 
 
 def foreign_entry_count(settings: Dict[str, Any]) -> int:
-    """PreToolUse hooks that are not ours: the user's own, left strictly alone."""
+    """Hooks of the events we register under that are not ours: the user's own, left strictly alone."""
     count = 0
-    for entry in pre_tool_use(settings) or []:
-        inner = entry.get("hooks") if isinstance(entry, dict) else None
-        count += sum(1 for h in inner if not is_ours(h)) if isinstance(inner, list) else 0
+    for event in EVENTS:
+        for entry in event_entries(settings, event) or []:
+            inner = entry.get("hooks") if isinstance(entry, dict) else None
+            count += sum(1 for h in inner if not is_ours(h)) if isinstance(inner, list) else 0
     return count
 
 

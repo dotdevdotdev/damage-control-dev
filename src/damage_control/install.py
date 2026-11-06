@@ -19,11 +19,12 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
-from damage_control import __version__, engine, packs, ruleset
+from damage_control import __version__, configguard, engine, packs, ruleset
 from damage_control import claude_code as cc
 from damage_control import harness_config as hc
 
@@ -138,23 +139,31 @@ def interpreter_runs(interpreter: str) -> bool:
 def selftest(interpreter: str, profile: Optional[str] = None) -> List[str]:
     """What failed when each hook kind was run as registered (empty = all good).
 
-    Every kind must start and exit 0 for a tool it does not gate; the shell hook must also
-    BLOCK (exit 2) a destructive command, which proves the rules actually loaded.
+    Every kind must start and exit 0 for a call it does not gate; the shell hook must also
+    BLOCK (exit 2) a destructive command, and the config hook a settings file that disables
+    hooks, which proves the rules actually loaded.
     """
     probes = [(kind, {"tool_name": "DamageControlSelftest", "tool_input": {}}, 0)
               for kind in dict.fromkeys(cc.MATCHERS.values())]
     probes += [("bash", {"tool_name": tool, "tool_input": {"command": SELFTEST_PROBE}}, 2)
                for tool in ("Bash", "PowerShell")]
     failures = []
-    for kind, payload, want in probes:
-        try:
-            got = subprocess.run(cc.selftest_command(interpreter, kind, profile), input=json.dumps(payload),
-                                 capture_output=True, text=True, timeout=engine.HOOK_TIMEOUT_SECONDS).returncode
-        except (OSError, subprocess.SubprocessError) as e:
-            failures.append(f"{kind}: {type(e).__name__}: {e}")
-            continue
-        if got != want:
-            failures.append(f"{kind}: exit {got}, expected {want}")
+    with tempfile.TemporaryDirectory() as tmp:
+        unsafe = Path(tmp) / "settings.json"
+        unsafe.write_text(json.dumps({"disableAllHooks": True}))
+        probes += [(cc.CONFIG_KIND, {"hook_event_name": cc.CONFIG_EVENT, "source": "skills",
+                                     "file_path": str(unsafe)}, 0),
+                   (cc.CONFIG_KIND, {"hook_event_name": cc.CONFIG_EVENT, "source": "project_settings",
+                                     "file_path": str(unsafe)}, 2)]
+        for kind, payload, want in probes:
+            try:
+                got = subprocess.run(cc.selftest_command(interpreter, kind, profile), input=json.dumps(payload),
+                                     capture_output=True, text=True, timeout=engine.HOOK_TIMEOUT_SECONDS).returncode
+            except (OSError, subprocess.SubprocessError) as e:
+                failures.append(f"{kind}: {type(e).__name__}: {e}")
+                continue
+            if got != want:
+                failures.append(f"{kind}: exit {got}, expected {want}")
     return failures
 
 
@@ -162,21 +171,31 @@ def selftest(interpreter: str, profile: Optional[str] = None) -> List[str]:
 # Structural edits of the settings dict
 # ----------------------------------------------------------------------------
 
-def _owned_under(pre: List[Any], matcher: str, kind: str) -> List[Dict[str, Any]]:
+def _owned_under(entries: List[Any], matcher: str, kind: str) -> List[Dict[str, Any]]:
     owned: List[Dict[str, Any]] = []
-    for entry in pre:
+    for entry in entries:
         inner = entry.get("hooks") if isinstance(entry, dict) and entry.get("matcher") == matcher else None
         if isinstance(inner, list):
             owned.extend(h for h in inner if cc.is_ours(h) and cc.kind_of(h) == kind)
     return owned
 
 
-def register(settings: Dict[str, Any], desired: Dict[str, Dict[str, Any]], created: List[str]) -> bool:
-    """Make ``settings`` carry exactly ``desired`` (matcher -> hook) as OUR entries. True if it changed.
+def _event_list(hooks: Dict[str, Any], event: str, created: List[str]) -> List[Any]:
+    entries = hooks.get(event)
+    if entries is None:
+        entries = hooks[event] = []
+        created.append(f"hooks.{event}")
+    elif not isinstance(entries, list):
+        raise hc.ConfigError(f"settings has a malformed `hooks.{event}` (not a list); damage control not registered")
+    return entries
+
+
+def register(settings: Dict[str, Any], desired: Dict[str, Dict[str, Dict[str, Any]]], created: List[str]) -> bool:
+    """Make ``settings`` carry exactly ``desired`` (event -> matcher -> hook) as OUR entries. True if it changed.
 
     Idempotent. Adds what is missing, rewrites an entry of ours whose interpreter, arguments,
-    ``timeout`` or ``onFailure`` drifted, drops duplicates and entries of ours under a matcher
-    that is not ours to register. Every entry that is not ours is left exactly as it was.
+    ``timeout`` or ``onFailure`` drifted, drops duplicates and entries of ours under an event or
+    matcher that is not ours to register. Every entry that is not ours is left exactly as it was.
     Raises ConfigError on a malformed ``hooks`` tree (rewriting it would destroy what is there).
     """
     changed = False
@@ -186,68 +205,67 @@ def register(settings: Dict[str, Any], desired: Dict[str, Dict[str, Any]], creat
         created.append("hooks")
     elif not isinstance(hooks, dict):
         raise hc.ConfigError("settings has a malformed `hooks` (not an object); damage control not registered")
-    pre = hooks.get("PreToolUse")
-    if pre is None:
-        pre = hooks["PreToolUse"] = []
-        created.append("hooks.PreToolUse")
-    elif not isinstance(pre, list):
-        raise hc.ConfigError("settings has a malformed `hooks.PreToolUse` (not a list); damage control not registered")
 
-    # Entries of ours that sit under a matcher/kind pair we do not register.
-    for entry in list(pre):
-        inner = entry.get("hooks") if isinstance(entry, dict) else None
-        if not isinstance(inner, list):
-            continue
-        matcher = entry.get("matcher")
-        expected_kind = cc.MATCHERS.get(matcher) if isinstance(matcher, str) else None
-        stray = [h for h in inner if cc.is_ours(h) and expected_kind != cc.kind_of(h)]
-        if stray:
-            changed = True
-            entry["hooks"] = [h for h in inner if h not in stray]
-            if not entry["hooks"]:
-                pre.remove(entry)
+    for event, matchers in desired.items():
+        entries = _event_list(hooks, event, created)
 
-    for matcher, wanted in desired.items():
-        kind = cc.MATCHERS[matcher]
-        owned = _owned_under(pre, matcher, kind)
-        if not owned:
-            pre.append({"matcher": matcher, "hooks": [dict(wanted)]})
-            changed = True
-            continue
-        first, extras = owned[0], owned[1:]
-        if first != wanted:
-            first.clear()
-            first.update(wanted)
-            changed = True
-        for dup in extras:
-            for entry in list(pre):
-                inner = entry.get("hooks") if isinstance(entry, dict) else None
-                if isinstance(inner, list) and any(h is dup for h in inner):
-                    entry["hooks"] = [h for h in inner if h is not dup]
-                    if not entry["hooks"]:
-                        pre.remove(entry)
-                    changed = True
+        # Entries of ours that sit under a matcher/kind pair we do not register.
+        for entry in list(entries):
+            inner = entry.get("hooks") if isinstance(entry, dict) else None
+            if not isinstance(inner, list):
+                continue
+            matcher = entry.get("matcher")
+            expected_kind = cc.EVENTS[event].get(matcher) if isinstance(matcher, str) else None
+            stray = [h for h in inner if cc.is_ours(h) and expected_kind != cc.kind_of(h)]
+            if stray:
+                changed = True
+                entry["hooks"] = [h for h in inner if h not in stray]
+                if not entry["hooks"]:
+                    entries.remove(entry)
+
+        for matcher, wanted in matchers.items():
+            owned = _owned_under(entries, matcher, cc.EVENTS[event][matcher])
+            if not owned:
+                entries.append({"matcher": matcher, "hooks": [dict(wanted)]})
+                changed = True
+                continue
+            first, extras = owned[0], owned[1:]
+            if first != wanted:
+                first.clear()
+                first.update(wanted)
+                changed = True
+            for dup in extras:
+                for entry in list(entries):
+                    inner = entry.get("hooks") if isinstance(entry, dict) else None
+                    if isinstance(inner, list) and any(h is dup for h in inner):
+                        entry["hooks"] = [h for h in inner if h is not dup]
+                        if not entry["hooks"]:
+                            entries.remove(entry)
+                        changed = True
     return changed
 
 
 def unregister(settings: Dict[str, Any], created: List[str]) -> bool:
     """Remove exactly our entries; prune containers we created and nothing else. True if it changed."""
-    pre = cc.pre_tool_use(settings)
-    if pre is None or not cc.owned_entries(settings):
+    if not cc.owned_entries(settings):
         return False
-    for entry in list(pre):
-        inner = entry.get("hooks") if isinstance(entry, dict) else None
-        if not isinstance(inner, list) or not any(cc.is_ours(h) for h in inner):
+    for event in cc.EVENTS:
+        entries = cc.event_entries(settings, event)
+        if entries is None:
             continue
-        remaining = [h for h in inner if not cc.is_ours(h)]
-        if remaining:
-            entry["hooks"] = remaining
-        else:
-            pre.remove(entry)
-    if not pre and "hooks.PreToolUse" in created:
-        del settings["hooks"]["PreToolUse"]
-        if not settings["hooks"] and "hooks" in created:
-            del settings["hooks"]
+        for entry in list(entries):
+            inner = entry.get("hooks") if isinstance(entry, dict) else None
+            if not isinstance(inner, list) or not any(cc.is_ours(h) for h in inner):
+                continue
+            remaining = [h for h in inner if not cc.is_ours(h)]
+            if remaining:
+                entry["hooks"] = remaining
+            else:
+                entries.remove(entry)
+        if not entries and f"hooks.{event}" in created:
+            del settings["hooks"][event]
+    if not settings["hooks"] and "hooks" in created:
+        del settings["hooks"]
     return True
 
 
@@ -316,8 +334,9 @@ def init(
                                f"{cc.profile_of(owned.hook) or '(none)'}, not {profile or '(none)'}: another "
                                "installer owns those entries. Use that installer, or uninstall it first.")
 
-    desired = {m: cc.wanted_hook(interpreter, k, engine.HOOK_TIMEOUT_SECONDS, fail_closed, profile)
-               for m, k in cc.MATCHERS.items()}
+    desired = {event: {m: cc.wanted_hook(interpreter, k, engine.HOOK_TIMEOUT_SECONDS, fail_closed, profile)
+                       for m, k in matchers.items()}
+               for event, matchers in cc.EVENTS.items()}
     created: List[str] = []
     preview = json.loads(json.dumps(current))
     would_change = register(preview, desired, [])
@@ -393,9 +412,13 @@ def init(
         "ruleset_version": f"{__version__}+{ruleset_id(digest)}", "interpreter": interpreter,
         "source": source, "rules": digest, "default_grants": grants, "harnesses": harnesses,
     })
-    log(f"{'registered' if result.changed else 'already registered'}: {len(desired)} matchers in {path} "
+    log(f"{'registered' if result.changed else 'already registered'}: {registration_count()} matchers in {path} "
         f"(scope {scope}, {'fail-closed' if fail_closed else 'FAIL-OPEN'}, interpreter {interpreter})")
     return 0
+
+
+def registration_count() -> int:
+    return sum(len(matchers) for matchers in cc.EVENTS.values())
 
 
 def ruleset_id(digest: Dict[str, str]) -> str:
@@ -458,30 +481,57 @@ def _drift(owned: List[cc.Owned], interpreter: str, profile: Optional[str], fail
     findings: List[Finding] = []
     claimed: List[int] = []
     missing = []
-    for matcher, kind in cc.MATCHERS.items():
-        hooks = [o.hook for o in owned if o.matcher == matcher and cc.kind_of(o.hook) == kind]
-        if not hooks:
-            missing.append(matcher)
-            continue
-        claimed.extend(id(h) for h in hooks)
-        hook = hooks[0]
-        if len(hooks) > 1:
-            findings.append(Finding("info", "duplicate", f"{matcher}: {len(hooks)} entries of ours (one is enough)"))
-        if hook.get("command") != interpreter:
-            findings.append(Finding("bad", "command", f"{matcher}: command is {hook.get('command')!r}, expected {interpreter!r}"))
-        if hook.get("args") != cc.hook_args(kind, profile):
-            findings.append(Finding("bad", "args", f"{matcher}: args are {hook.get('args')!r}, expected {cc.hook_args(kind, profile)!r}"))
-        if hook.get("timeout") != engine.HOOK_TIMEOUT_SECONDS:
-            findings.append(Finding("bad", "timeout", f"{matcher}: timeout is {hook.get('timeout')!r}, expected {engine.HOOK_TIMEOUT_SECONDS} (lost)"))
-        if fail_closed and hook.get("onFailure") != "block":
-            findings.append(Finding("bad", "onFailure", f"{matcher}: onFailure is {hook.get('onFailure')!r}, expected 'block' (lost)"))
+    for event, matchers in cc.EVENTS.items():
+        for matcher, kind in matchers.items():
+            label = matcher if event == cc.PRE_TOOL_USE else f"{event} guard"
+            hooks = [o.hook for o in owned if o.event == event and o.matcher == matcher and cc.kind_of(o.hook) == kind]
+            if not hooks:
+                missing.append(label)
+                continue
+            claimed.extend(id(h) for h in hooks)
+            hook = hooks[0]
+            if len(hooks) > 1:
+                findings.append(Finding("info", "duplicate", f"{label}: {len(hooks)} entries of ours (one is enough)"))
+            if hook.get("command") != interpreter:
+                findings.append(Finding("bad", "command", f"{label}: command is {hook.get('command')!r}, expected {interpreter!r}"))
+            if hook.get("args") != cc.hook_args(kind, profile):
+                findings.append(Finding("bad", "args", f"{label}: args are {hook.get('args')!r}, expected {cc.hook_args(kind, profile)!r}"))
+            if hook.get("timeout") != engine.HOOK_TIMEOUT_SECONDS:
+                findings.append(Finding("bad", "timeout", f"{label}: timeout is {hook.get('timeout')!r}, expected {engine.HOOK_TIMEOUT_SECONDS} (lost)"))
+            if fail_closed and hook.get("onFailure") != "block":
+                findings.append(Finding("bad", "onFailure", f"{label}: onFailure is {hook.get('onFailure')!r}, expected 'block' (lost)"))
     if missing:
         findings.append(Finding("bad", "missing", "missing entry for matcher(s): " + ", ".join(missing)))
     for o in owned:
         if id(o.hook) not in claimed:
-            findings.append(Finding("bad", "matcher", f"wrong matcher: {o.matcher!r} runs the {cc.kind_of(o.hook)!r} hook "
-                                    f"(expected {[m for m, k in cc.MATCHERS.items() if k == cc.kind_of(o.hook)] or 'none'})"))
+            expected = [m for m, k in cc.EVENTS[o.event].items() if k == cc.kind_of(o.hook)]
+            findings.append(Finding("bad", "matcher", f"wrong matcher: {o.matcher!r} under {o.event} runs the {cc.kind_of(o.hook)!r} hook "
+                                    f"(expected {expected or 'none'})"))
     return findings
+
+
+def unsafe_setting_findings(settings: Dict[str, Any], path: Path) -> List[Finding]:
+    """One ``bad`` finding per setting in ``path`` that disables or redirects damage control."""
+    return [Finding("bad", "unsafe-setting", f"{path}: {reason}")
+            for reason in configguard.unsafe_settings(settings, engine.PROFILE)]
+
+
+def registration_problems(settings: Dict[str, Any], record: Dict[str, Any], hrec: Dict[str, Any]) -> List[str]:
+    """Why ``settings`` no longer carries the registration ``record`` says ``init`` wrote: drift, loss, wrong matcher."""
+    findings = _drift(cc.owned_entries(settings), record.get("interpreter", ""), hrec.get("profile"),
+                      hrec.get("fail_mode", "closed") == "closed")
+    return [f.message for f in findings if f.level == "bad"]
+
+
+def recorded_registration(path: str) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+    """``(record, harness entry)`` when ``init`` recorded ``path`` as a settings file it registered into."""
+    record = load_record()
+    target = os.path.realpath(path)
+    for hrec in (record.get("harnesses") or {}).values():
+        recorded = hrec.get("config_path")
+        if hrec.get("harness") == cc.HARNESS and recorded and os.path.realpath(recorded) == target:
+            return record, hrec
+    return None
 
 
 def inspect(scope: str = "user", settings: Optional[str] = None, deep: bool = False,
@@ -507,7 +557,13 @@ def inspect(scope: str = "user", settings: Optional[str] = None, deep: bool = Fa
         fail_closed = all(o.hook.get("onFailure") == "block" for o in owned)
 
     drift = _drift(owned, interpreter, profile, fail_closed)
-    findings += drift or [Finding("ok", "registration", f"{len(cc.MATCHERS)} matchers registered correctly in {path}")]
+    findings += drift or [Finding("ok", "registration", f"{registration_count()} matchers registered correctly in {path}")]
+    guarded = any(o.event == cc.CONFIG_EVENT and cc.kind_of(o.hook) == cc.CONFIG_KIND for o in owned)
+    findings.append(Finding("ok" if guarded else "bad", "config-guard",
+                            f"{cc.CONFIG_EVENT} guard is registered: a settings change that removes the guard or disables hooks is refused"
+                            if guarded else f"{cc.CONFIG_EVENT} guard is not registered: a settings change made by any other route is not seen; "
+                            "run `damage-control-dev init`"))
+    findings += unsafe_setting_findings(current, path)
 
     for command in sorted({o.hook.get("command", "") for o in owned}):
         alive = interpreter_runs(command) if command else False
@@ -535,7 +591,7 @@ def inspect(scope: str = "user", settings: Optional[str] = None, deep: bool = Fa
 
     foreign = cc.foreign_entry_count(current)
     if foreign:
-        findings.append(Finding("info", "foreign-hooks", f"{foreign} PreToolUse hook(s) in {path} are not ours (left alone)"))
+        findings.append(Finding("info", "foreign-hooks", f"{foreign} hook(s) in {path} are not ours (left alone)"))
     findings += _overlay_findings()
     protected = [config_home(), engine.policy_file_path(), record_path()]
     findings += _mode_findings([p for p in protected if p.exists()])

@@ -295,6 +295,22 @@ def log_disabled(
     )
 
 
+def log_observed(
+    tool: str,
+    command: str,
+    reason: str,
+) -> None:
+    """
+    Log a change the harness applies whatever the hook says (a managed-policy settings change).
+    """
+    log_entry(
+        tool=tool,
+        command=command,
+        decision="observed",
+        blocked_by=reason,
+    )
+
+
 def log_asked(
     tool: str,
     command: str,

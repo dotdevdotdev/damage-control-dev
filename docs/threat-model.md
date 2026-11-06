@@ -23,7 +23,7 @@ The target is the **accidental** catastrophic call from an agent that is trying 
 - Destructive git: `git reset --hard`, `git push --force`, `git clean -fd`, `git stash clear`.
 - Destructive SQL and database CLIs: `DROP TABLE`, `TRUNCATE`, `DELETE` with no `WHERE`, `FLUSHALL`.
 - Reads and writes of secrets: `.env` files, SSH and cloud credentials, private keys, Terraform state.
-- Edits to the guard's own configuration: the hook registration in `~/.claude/settings.json`, the policy file, rule overlays.
+- Edits to the guard's own configuration: the hook registration in `~/.claude/settings.json`, the policy file, rule overlays. A settings change that reaches a running session by any other route is judged by [the settings-change guard](config-change.md).
 - Risky MCP tool calls: path arguments that point at protected files, and the policies in the `mcp-tools` group.
 - Opt-in vendor packs for AWS, GCP, Firebase, container tooling, infrastructure-as-code and package publishing (`damage-control-dev packs list`).
 
