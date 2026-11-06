@@ -87,7 +87,7 @@ def test_init_status_uninstall_round_trip(tmp_path):
     args = ("--settings", str(path))
     first = cli(home, "init", *args, "--allow-dev-source", "--fail-open")
     assert first.returncode == 0, first.stderr
-    assert "10 matchers" in first.stdout
+    assert f"{install.registration_count()} matchers" in first.stdout
     after_first = path.read_text()
     assert set(json.loads(after_first)["hooks"]) == {cc.PRE_TOOL_USE, cc.CONFIG_EVENT}
     assert "already registered" in cli(home, "init", *args, "--allow-dev-source", "--fail-open").stdout
