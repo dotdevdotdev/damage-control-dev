@@ -10,6 +10,7 @@ This page says what it is built to catch, what it does not catch, and where it f
 - [Fail-closed and fail-open](#fail-closed-and-fail-open)
 - [The scan budget](#the-scan-budget)
 - [The control plane and the kill switch](#the-control-plane-and-the-kill-switch)
+- [Nested `claude` runs](#nested-claude-runs)
 - [How shell commands are read](#how-shell-commands-are-read)
 - [Script indirection](#script-indirection)
 - [Defense in depth](#defense-in-depth)
@@ -166,6 +167,23 @@ exit=2
 ```
 
 Mind the cost of an overly broad allowlist: because `allowed_paths` outranks control-plane protection, an entry such as `~/.claude/*` with `allow: all` would make the hook registration agent-writable. Keep entries narrow.
+
+## Nested `claude` runs
+
+A shell command can start another `claude`, and that child loads its own hooks. An option that removes them gives a child that runs every tool call with no damage control, so the engine judges the operation a `claude` command line performs, not its spelling. It reads the command line with the shared option grammar (abbreviations, `--opt=value`), through any launcher or wrapper in front (`env`, `sudo`, `timeout`, `uv run`, `npx`, `sh -c`), a variable-built name, and a script or recipe the engine already follows.
+
+| What the command line does | Verdict | Why |
+|---|---|---|
+| `--bare` | block | documented to skip hooks, plugins and settings |
+| `--safe-mode` | block | observed to drop the hooks |
+| `--settings` carrying `disableAllHooks` | block | observed to silence the hooks |
+| `--setting-sources` without `user` | block | `user` is where `install` registers the guard by default |
+| `--setting-sources` with `user` but without `project` or `local` | ask | a guard registered in the missing scope would not load |
+| `--settings <file>`, or JSON the engine cannot read | ask | the effect depends on contents the engine cannot see |
+| `--plugin-dir` | ask | adds hooks and settings from a directory the agent controls (observed to add a hook) |
+| `CLAUDE_CONFIG_DIR` set for the child (in front, via `env`, exported, or handed to `sh -c`) | ask | the child reads its settings and hooks from another directory (documented, not observed) |
+
+A plain `claude -p "..."`, a `--settings` JSON text without `disableAllHooks`, and text that only mentions a flag (a commit message, an `echo`, a `grep`) stay allowed. `--bare` and `CLAUDE_CONFIG_DIR` were not verified live (authentication was lost in the scratch run, see [hooks research](hooks-research.md)); their tiers rest on the documentation. The rules are `control-plane.claude-nested-*`; a missing scope in `--setting-sources` is judged against the default install scope, so a guard registered only in a project or local scope is covered by the ask tier rather than the block tier.
 
 ## How shell commands are read
 

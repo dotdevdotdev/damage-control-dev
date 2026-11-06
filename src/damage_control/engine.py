@@ -28,7 +28,7 @@ from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple, Union
 
-from damage_control import audit, configguard, data_operands, explain, gitops, nonexec, optiongrammar, recipefile, scriptfile, shellexpand
+from damage_control import audit, claudeops, configguard, data_operands, explain, gitops, nonexec, optiongrammar, recipefile, scriptfile, shellexpand
 from damage_control.profile import GENERIC
 
 
@@ -4934,12 +4934,43 @@ def _feeder_git_args(words: List[str]) -> Optional[List[str]]:
     return None
 
 
+_CLAUDE_PACKAGE_RE = _rx(r"^@anthropic-ai/claude-code(?:@[^/]*)?$")
+_EXPORT_WORDS = frozenset({"export", "declare", "typeset"})
+
+
+def _claude_invocation(words: List[str]) -> Optional[Tuple[List[str], List[str]]]:
+    """``(arguments, environment assignments)`` when the command is ``claude`` (or its npm package), else None.
+
+    The command is found past launchers and wrappers (``env``, ``sudo``, ``uv run``, ``npx``); the
+    ``NAME=value`` words in front of it are the environment the child gets.
+    """
+    at = _wrapped_command_index(words)
+    if at is None:
+        return None
+    name = words[at].rsplit("/", 1)[-1]
+    if name != "claude" and not _CLAUDE_PACKAGE_RE.match(words[at]):
+        return None
+    return words[at + 1 :], [w for w in words[:at] if _ASSIGN_TOKEN_RE.match(w)]
+
+
+def _exported_env(words: List[str]) -> List[str]:
+    """The ``NAME=value`` words an ``export`` / ``declare -x`` / ``typeset -x`` command puts in the environment."""
+    if not words or words[0] not in _EXPORT_WORDS:
+        return []
+    return [w for w in words[1:] if _ASSIGN_TOKEN_RE.match(w)]
+
+
 def _exec_payload_commands(command: str, rules: bool = False, _depth: int = 0) -> List[str]:
     """Commands that the tools in ``command`` run from option values or embedded programs."""
     if _depth > _RESCAN_DEPTH:
         return []
     out: List[str] = []
+    exported: List[str] = []
     for words in _segment_raw_words(command):
+        exported += _exported_env(words)
+        claude = _claude_invocation(words)
+        if claude is not None:
+            out += claudeops.commands(claude[0], claude[1] + exported)
         base, args = _exec_tool(words)
         fed = _feeder_git_args(words)
         if fed is not None:
@@ -4968,6 +4999,10 @@ def _exec_payload_commands(command: str, rules: bool = False, _depth: int = 0) -
         if head in _SHELL_NAMES and head != "su":
             inner, _rest = _eval_shell_invocation(words[k + 1 :], False)
             if inner:
+                handed = [w for w in words[:k] if _ASSIGN_TOKEN_RE.match(w)] + exported
+                carried = [w for w in handed if w.partition("=")[0] == claudeops.CONFIG_DIR_VAR]
+                if carried:  # the shell's children inherit what it was given
+                    inner = "export " + " ".join(_quote_word(w) for w in carried) + "; " + inner
                 out += _inner_hidden(inner, rules, _depth)
         elif base == "ssh":
             remote = " ".join(w for w in _ssh_remote_command(args) if w != "--")

@@ -3,5 +3,59 @@
   "*.damagecontrol.yml",
   "~/.claude/settings.json",
   "~/.claude/hooks/*"
+ ],
+ "bashToolPatterns": [
+  {
+   "id": "control-plane.claude-nested-bare",
+   "pattern": "\\bclaude\\s+--dc:bare\\b",
+   "reason": "a nested claude run with --bare loads no hooks, so the guard does not apply to it",
+   "anchored": true
+  },
+  {
+   "id": "control-plane.claude-nested-safe-mode",
+   "pattern": "\\bclaude\\s+--dc:safe-mode\\b",
+   "reason": "a nested claude run with --safe-mode loads no hooks, so the guard does not apply to it",
+   "anchored": true
+  },
+  {
+   "id": "control-plane.claude-nested-disable-all-hooks",
+   "pattern": "\\bclaude\\s+--dc:disable-all-hooks\\b",
+   "reason": "a nested claude run whose --settings sets disableAllHooks loads no hooks, so the guard does not apply to it",
+   "anchored": true
+  },
+  {
+   "id": "control-plane.claude-nested-no-user-scope",
+   "pattern": "\\bclaude\\s+--dc:no-user-scope\\b",
+   "reason": "a nested claude run whose --setting-sources leaves out the user scope does not load the guard registered there",
+   "anchored": true
+  },
+  {
+   "id": "control-plane.claude-nested-partial-sources",
+   "pattern": "\\bclaude\\s+--dc:partial-sources\\b",
+   "reason": "a nested claude run whose --setting-sources leaves out the project or local scope may not load a guard registered there",
+   "ask": true,
+   "anchored": true
+  },
+  {
+   "id": "control-plane.claude-nested-settings-file",
+   "pattern": "\\bclaude\\s+--dc:settings-file\\b",
+   "reason": "a nested claude run with --settings loads settings the engine cannot read, which may remove hooks",
+   "ask": true,
+   "anchored": true
+  },
+  {
+   "id": "control-plane.claude-nested-plugin-dir",
+   "pattern": "\\bclaude\\s+--dc:plugin-dir\\b",
+   "reason": "a nested claude run with --plugin-dir loads hooks and settings from a directory the engine cannot read",
+   "ask": true,
+   "anchored": true
+  },
+  {
+   "id": "control-plane.claude-nested-config-dir",
+   "pattern": "\\bclaude\\s+--dc:config-dir\\b",
+   "reason": "a nested claude run with CLAUDE_CONFIG_DIR set reads its settings and hooks from another directory",
+   "ask": true,
+   "anchored": true
+  }
  ]
 }

@@ -112,3 +112,58 @@ LAUNCHER_VALUE_OPTS: Dict[str, FrozenSet[str]] = {
 
 # ``uv run`` / ``pipx run`` / ``npm exec``: the subcommand keeps the launcher's options
 LAUNCHER_SUBCOMMANDS = frozenset({"run", "exec", "dlx"})
+
+
+# ``claude``: long options by name, with whether they take a value. Claude Code's parser needs the whole
+# word for a long option; an abbreviation is read as the one option it is a prefix of, so a spelling no
+# parser would accept is judged like the real one and never allowed because it looks unfamiliar.
+_CLAUDE_FLAGS = frozenset({
+    "--bare", "--safe-mode", "--print", "--verbose", "--continue", "--fork-session", "--chrome", "--no-chrome",
+    "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--strict-mcp-config", "--ide",
+    "--no-session-persistence", "--include-partial-messages", "--replay-user-messages", "--disable-slash-commands",
+    "--mcp-debug", "--version", "--help", "--resume", "--debug", "--worktree", "--tmux",
+})
+_CLAUDE_VALUE_OPTS = frozenset({
+    "--settings", "--setting-sources", "--plugin-dir", "--add-dir", "--mcp-config", "--allowed-tools",
+    "--allowedtools", "--disallowed-tools", "--disallowedtools", "--tools", "--system-prompt", "--append-system-prompt",
+    "--system-prompt-file", "--append-system-prompt-file", "--permission-mode", "--permission-prompt-tool",
+    "--model", "--fallback-model", "--output-format", "--input-format", "--max-turns", "--max-budget-usd",
+    "--session-id", "--agents", "--agent", "--betas", "--debug-file", "--effort", "--name", "--file",
+    "--json-schema", "--from-pr",
+})
+_CLAUDE_LONG = _CLAUDE_FLAGS | _CLAUDE_VALUE_OPTS
+_CLAUDE_SHORT_VALUE = frozenset("n")
+
+
+def _claude_long(name: str) -> str:
+    """The long option an (abbreviated) ``--name`` stands for: itself, else its one unambiguous completion."""
+    key = name.lower()
+    if key in _CLAUDE_LONG:
+        return key
+    hits = [o for o in _CLAUDE_LONG if o.startswith(key)]
+    return hits[0] if len(hits) == 1 else key
+
+
+def claude_options(args: List[str]) -> List[tuple]:
+    """``(long option, value or None)`` for each option on a ``claude`` command line, in order.
+
+    ``--opt=value`` and ``--opt value`` give the same pair; a value option takes the next word whatever it
+    looks like; ``--`` ends the options; the words that are not options (the prompt, a subcommand) are skipped.
+    """
+    out: List[tuple] = []
+    i = 0
+    while i < len(args):
+        w = args[i]
+        i += 1
+        if w == "--":
+            break
+        if w.startswith("--") and len(w) > 2:
+            name, eq, value = w.partition("=")
+            long = _claude_long(name)
+            if long in _CLAUDE_VALUE_OPTS and not eq:
+                value = args[i] if i < len(args) else None
+                i += 1
+            out.append((long, value if (eq or long in _CLAUDE_VALUE_OPTS) else None))
+        elif w.startswith("-") and len(w) > 1 and w[1] in _CLAUDE_SHORT_VALUE and len(w) == 2:
+            i += 1
+    return out
