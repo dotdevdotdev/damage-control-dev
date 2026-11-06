@@ -42,18 +42,21 @@ CONTENT_FIELDS: Dict[str, str] = {"Write": "content", "Edit": "new_string", "Not
 # ``None`` for a table means every tool is an ``mcp`` call; the decision itself lives in
 # ``policy.Guard``.
 HOOK_KINDS: Dict[str, Tuple[_Tools, bool]] = {
-    # Bash and PowerShell calls: judge the command line.
-    "bash": ({"Bash": ("shell", ("command",)), "PowerShell": ("shell", ("command",))}, True),
+    # Bash, PowerShell and Monitor calls: judge the command line. A Monitor with a ``url`` and no
+    # ``command`` opens a WebSocket and has nothing to judge.
+    "bash": ({"Bash": ("shell", ("command",)), "PowerShell": ("shell", ("command",)),
+              "Monitor": ("shell", ("command",))}, True),
     # Edit and NotebookEdit calls: judge the target path. NotebookEdit writes files exactly
     # like Edit but names its target ``notebook_path``: an operation refused via Edit must
     # not be permitted via NotebookEdit (#923).
     "edit": ({"Edit": ("edit", ("file_path", "notebook_path")),
               "NotebookEdit": ("edit", ("file_path", "notebook_path"))}, True),
     "write": ({"Write": ("write", ("file_path",))}, True),
-    # Read, Grep and Glob: judge the path they read or list. ``Glob`` only reveals filenames,
-    # but a zero-access directory is still off-limits.
+    # Read, Grep, Glob and LSP: judge the path they read or list. ``Glob`` only reveals filenames,
+    # but a zero-access directory is still off-limits. ``LSP`` returns symbols and documentation
+    # of the file in ``filePath``.
     "read": ({"Read": ("read", ("file_path",)), "Grep": ("read", ("path",)),
-              "Glob": ("read", ("path",))}, False),
+              "Glob": ("read", ("path",)), "LSP": ("read", ("filePath",))}, False),
     "mcp": (None, True),
 }
 

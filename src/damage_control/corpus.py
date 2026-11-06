@@ -22,6 +22,9 @@ from typing import Any, Callable, Dict, Iterator, List, Tuple
 
 VERDICTS = ("block", "ask", "allow")
 ROW_KEYS = {"id", "class", "command", "cwd", "verdict", "source"}
+# A row names the tool that carries its command (default ``Bash``); the hook kind is the one registered for it.
+OPTIONAL_ROW_KEYS = {"tool"}
+SHELL_TOOLS = ("Bash", "PowerShell", "Monitor")
 
 
 class CorpusError(Exception):
@@ -42,8 +45,10 @@ def validate(data: Dict[str, Any]) -> None:
         raise CorpusError("corpus needs 'classes' (object), 'rows' (list) and optionally 'files' (object)")
     seen = set()
     for row in rows:
-        if set(row) != ROW_KEYS:
-            raise CorpusError(f"row {row.get('id', row)!r}: keys must be exactly {sorted(ROW_KEYS)}")
+        if not ROW_KEYS <= set(row) <= ROW_KEYS | OPTIONAL_ROW_KEYS:
+            raise CorpusError(f"row {row.get('id', row)!r}: keys must be {sorted(ROW_KEYS)} and optionally {sorted(OPTIONAL_ROW_KEYS)}")
+        if row.get("tool", "Bash") not in SHELL_TOOLS:
+            raise CorpusError(f"row {row['id']!r}: tool must be one of {SHELL_TOOLS}")
         if row["id"] in seen:
             raise CorpusError(f"duplicate row id {row['id']!r}")
         seen.add(row["id"])
@@ -61,10 +66,10 @@ def _build_tree(files: Dict[str, str], root: Path) -> None:
         path.chmod(0o755)
 
 
-def _hook(command: str, cwd: str, home: Path) -> str:
+def _hook(command: str, cwd: str, home: Path, tool: str = "Bash") -> str:
     environ = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "PWD": cwd}
     payload = {"session_id": "00000000-0000-0000-0000-000000000000", "cwd": cwd, "hook_event_name": "PreToolUse",
-               "permission_mode": "default", "tool_name": "Bash", "tool_input": {"command": command}}
+               "permission_mode": "default", "tool_name": tool, "tool_input": {"command": command}}
     proc = subprocess.run([sys.executable, "-I", "-m", "damage_control.hook", "bash"], input=json.dumps(payload),
                           capture_output=True, text=True, env=environ, cwd=str(home), timeout=120)
     if proc.returncode == 2:
@@ -90,12 +95,12 @@ def scratch(files: Dict[str, str]) -> Iterator[Tuple[Path, Callable[[str], str]]
         yield home, sub
 
 
-def replay(data: Dict[str, Any], judge: Callable[[str, str, Path], str] = _hook) -> List[Dict[str, Any]]:
-    """Run every row through ``judge(command, cwd, home)``; each result is the row plus ``got`` and ``ok``."""
+def replay(data: Dict[str, Any], judge: Callable[..., str] = _hook) -> List[Dict[str, Any]]:
+    """Run every row through ``judge(command, cwd, home, tool)``; each result is the row plus ``got`` and ``ok``."""
     results = []
     with scratch(data.get("files", {})) as (home, sub):
         for row in data["rows"]:
-            got = judge(sub(row["command"]), sub(row["cwd"]), home)
+            got = judge(sub(row["command"]), sub(row["cwd"]), home, row.get("tool", "Bash"))
             results.append({**row, "got": got, "ok": got == row["verdict"]})
     return results
 

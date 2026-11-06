@@ -15,14 +15,9 @@ import sys
 from pathlib import Path
 from typing import List
 
-from damage_control import adapter, claude_code, engine, policy, scriptfile
+from damage_control import adapter, claude_code, engine, policy, scriptfile, toolcoverage
 
 OUT = Path(__file__).resolve().parent.parent / "docs" / "coverage.md"
-
-# Tools Claude Code has that no hook judges, by name. They are listed so "unsupported" is a stated
-# fact rather than an omission; the list is not exhaustive and the check cannot prove it is.
-UNSUPPORTED = ("WebFetch", "WebSearch", "Task", "Agent", "Skill", "Monitor", "TodoWrite", "AskUserQuestion")
-
 
 def render() -> str:
     path_kinds = set(policy._PATH_VERB)  # kinds that judge one path: block only, never ask
@@ -40,7 +35,6 @@ def render() -> str:
                 judges += f", and script-looking text in `{adapter.CONTENT_FIELDS[matcher]}`"
         ask = "yes" if kind not in path_kinds or kind in policy._SCRIPT_AUTHORING else "no"
         rows.append(f"| `{matcher}` | `{hook}` | {judges} | yes | {ask} | yes |")
-    unsupported = ", ".join(f"`{t}`" for t in UNSUPPORTED)
     return "\n".join([
         "# Coverage",
         "",
@@ -58,10 +52,28 @@ def render() -> str:
         "session becomes a block (unattended) or an allow (bypass permission mode) -- except an `unverifiable`",
         "one, which bypass never demotes.",
         "",
-        f"**Unsupported (no hook is registered, so nothing is judged):** {unsupported}.",
-        "",
+        *decision_section(),
         *script_section(),
     ])
+
+
+def decision_section() -> List[str]:
+    """One decision per Claude Code tool, from ``toolcoverage.DECISIONS``."""
+    rows = [f"| {', '.join(f'`{n}`' for n in d.names)} | {d.harm} | {d.decision} | {d.reason} |" for d in toolcoverage.DECISIONS]
+    return [
+        "## Decision per tool",
+        "",
+        "Every built-in tool name Claude Code is known to have, with whether it can do harm the judged tools cannot,",
+        "and the decision. A tool listed *out of scope* has no hook registered, so nothing is judged for it.",
+        "The names were observed in Claude Code 2.1.319 from its binary and the hook-input schema it validates, not from",
+        "a live session. A test holds this table to the registered matchers; a tool Claude Code adds later is",
+        "missing until someone reviews it and adds a row to `src/damage_control/toolcoverage.py`.",
+        "",
+        "| Tool | Can it do harm | Decision | Reason |",
+        "|---|---|---|---|",
+        *rows,
+        "",
+    ]
 
 
 def script_section() -> List[str]:

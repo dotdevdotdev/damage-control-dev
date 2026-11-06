@@ -36,7 +36,7 @@ def test_explain_gives_the_verdict_the_real_hook_gives_for_every_corpus_row():
     data = corpus.load()
     hook = {r["id"]: r["got"] for r in corpus.replay(data)}
 
-    def judge(command: str, cwd: str, home: Path) -> str:
+    def judge(command: str, cwd: str, home: Path, tool: str) -> str:
         return report(command, cwd, home)["verdict"]["decision"]
 
     explained = {r["id"]: r["got"] for r in corpus.replay(data, judge=judge)}
