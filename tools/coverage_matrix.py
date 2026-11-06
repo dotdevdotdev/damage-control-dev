@@ -53,6 +53,7 @@ def render() -> str:
         "one, which bypass never demotes.",
         "",
         *decision_section(),
+        *config_section(),
         *script_section(),
     ])
 
@@ -72,6 +73,19 @@ def decision_section() -> List[str]:
         "| Tool | Can it do harm | Decision | Reason |",
         "|---|---|---|---|",
         *rows,
+        "",
+    ]
+
+
+def config_section() -> List[str]:
+    """The settings-change coverage, from the registration table the installer writes."""
+    sources = ", ".join(f"`{s}`" for s in claude_code.CONFIG_SOURCES)
+    return [
+        "## Settings changes",
+        "",
+        f"One `{claude_code.CONFIG_EVENT}` hook (kind `{claude_code.CONFIG_KIND}`) judges a changed settings file, whatever wrote it;",
+        f"see the [settings-change guard](config-change.md). Sources: {sources}. A change to a skill file is not judged.",
+        "A block stops the change applying to the running session; a managed-policy change cannot be blocked and is audited as observed.",
         "",
     ]
 

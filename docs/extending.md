@@ -127,9 +127,9 @@ The engine modules need only the standard library. PyYAML is imported lazily, an
 }
 ```
 
-The nine matchers and their hook kinds are in [coverage](coverage.md). `args` gains `--profile PATH` when a profile is used. Our entries are recognized by the module name `damage_control.hook` in `args` and by nothing else; every other hook in the file is left alone.
+The tool matchers and their hook kinds are in [coverage](coverage.md). One more entry sits under the `ConfigChange` event; see [the settings-change guard](config-change.md). `args` gains `--profile PATH` when a profile is used. Our entries are recognized by the module name `damage_control.hook` in `args` and by nothing else; every other hook in the file is left alone.
 
-Before it writes, `init` runs the same command as a self-test. Every hook kind must exit 0 on a tool it does not gate, and Bash must block `rm -rf`. If the self-test fails, nothing is registered.
+Before it writes, `init` runs the same command as a self-test. Every hook kind must exit 0 on a call it does not gate, Bash must block `rm -rf`, and the settings-change hook must block a settings file that sets `disableAllHooks`. If the self-test fails, nothing is registered.
 
 ## Why the hook fails closed
 

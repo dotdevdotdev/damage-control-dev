@@ -74,10 +74,14 @@ def desired():
     return {m: cc.wanted_hook("/usr/bin/python3", k, 10, True) for m, k in cc.MATCHERS.items()}
 
 
+def reg(settings, matchers):
+    return install.register(settings, {cc.PRE_TOOL_USE: matchers}, [])
+
+
 def test_the_new_matchers_are_registered_under_their_kinds():
     assert cc.MATCHERS["Monitor"] == "bash" and cc.MATCHERS["LSP"] == "read"
     settings = {}
-    install.register(settings, desired(), [])
+    reg(settings, desired())
     registered = {o.matcher: cc.kind_of(o.hook) for o in cc.owned_entries(settings)}
     assert registered == cc.MATCHERS
 
@@ -86,27 +90,27 @@ def test_registering_twice_changes_nothing_and_upgrading_adds_only_the_new_match
     old = {m: h for m, h in desired().items() if m not in ("Monitor", "LSP")}
     foreign = {"matcher": "Bash", "hooks": [{"type": "command", "command": "/opt/mine"}]}
     settings = {"hooks": {"PreToolUse": [foreign]}}
-    install.register(settings, old, [])
+    reg(settings, old)
     before = copy.deepcopy(settings)
-    assert install.register(settings, desired(), []) is True
+    assert reg(settings, desired()) is True
     added = [e["matcher"] for e in settings["hooks"]["PreToolUse"] if e not in before["hooks"]["PreToolUse"]]
     assert sorted(added) == ["LSP", "Monitor"]
     assert foreign in settings["hooks"]["PreToolUse"]
     once = copy.deepcopy(settings)
-    assert install.register(settings, desired(), []) is False and settings == once
+    assert reg(settings, desired()) is False and settings == once
 
 
 def test_uninstall_removes_every_entry_of_ours_including_the_new_ones_and_only_those():
     foreign = {"matcher": "Monitor", "hooks": [{"type": "command", "command": "/opt/mine"}]}
     settings = {"hooks": {"PreToolUse": [foreign]}}
-    install.register(settings, desired(), [])
+    reg(settings, desired())
     assert install.unregister(settings, []) is True
     assert settings == {"hooks": {"PreToolUse": [foreign]}}
 
 
 def test_doctor_reports_a_missing_new_matcher():
     settings = {}
-    install.register(settings, {m: h for m, h in desired().items() if m != "Monitor"}, [])
+    reg(settings, {m: h for m, h in desired().items() if m != "Monitor"})
     findings = install._drift(cc.owned_entries(settings), "/usr/bin/python3", None, True)
     assert any(f.level == "bad" and "Monitor" in f.message for f in findings)
 
