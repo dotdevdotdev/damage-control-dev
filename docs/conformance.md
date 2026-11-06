@@ -26,7 +26,8 @@ source says *control* is the same spelling on a harmless command: it must stay a
 | [quoted-text](#quoted-text) | 7 | A protected path written inside text a command only prints, sends or writes, against the same text where the command opens it. |
 | [tool-carrier](#tool-carrier) | 6 | The same command carried by a different Claude Code tool (Monitor, PowerShell) than Bash must get the verdict Bash gives it. |
 | [option-spelling](#option-spelling) | 29 | An option of a command that discards uncommitted work written as an abbreviation, a cluster, a negated form or an alias, or left to run time. |
-| **Total** | 165 | |
+| [settings-write](#settings-write) | 15 | A write to a Claude Code settings file, which may set `disableAllHooks` or rewrite `hooks`. |
+| **Total** | 180 | |
 
 ## quote-splitting
 
@@ -282,6 +283,28 @@ An option of a command that discards uncommitted work written as an abbreviation
 | `git restore file.txt` | `/tmp` | allow | control: one file |
 | `git worktree remove ../wt` | `/tmp` | allow | control: removal without force |
 | `echo 'git reset --har; git clean --for; git restore -W .'` | `/tmp` | allow | control: text that only mentions the operations |
+
+## settings-write
+
+A write to a Claude Code settings file, which may set `disableAllHooks` or rewrite `hooks`.
+
+| Command | Directory | Verdict | Source |
+|---|---|---|---|
+| `echo '{}' > .claude/settings.local.json` | `@HOME@/proj` | ask | redirect over the local settings file |
+| `echo '{}' >> @HOME@/proj/.claude/settings.json` | `/tmp` | ask | append to the project settings file |
+| `echo '{}' \| tee @HOME@/proj/.claude/settings.local.json` | `/tmp` | ask | tee over the local settings file |
+| `sed -i 's/true/false/' @HOME@/proj/.claude/settings.local.json` | `/tmp` | ask | in-place edit |
+| `jq '.disableAllHooks=true' @HOME@/proj/.claude/settings.local.json > @HOME@/n.json && mv @HOME@/n.json @HOME@/proj/.claude/settings.local.json` | `/tmp` | ask | jq rewrite, then a move over the file |
+| `cp @HOME@/n.json @HOME@/proj/.claude/settings.json` | `/tmp` | ask | copy over the project settings file |
+| `echo '{}' > @HOME@/proj/.claude/./settings.local.json` | `/tmp` | ask | dot segment in the path |
+| `echo '{}' > @HOME@/proj//.claude//settings.local.json` | `/tmp` | ask | repeated slashes in the path |
+| `echo '{}' > @HOME@/proj/.cl""aude/settings.local.json` | `/tmp` | ask | quote split inside the directory name |
+| `bash settings-write.sh` | `@ROOT@` | ask | a script that writes the local settings file |
+| `cat @HOME@/proj/.claude/settings.local.json` | `/tmp` | allow | control: reading the file |
+| `grep disableAllHooks @HOME@/proj/.claude/settings.local.json` | `/tmp` | allow | control: searching the file for the key |
+| `jq .hooks @HOME@/proj/.claude/settings.local.json` | `/tmp` | allow | control: jq reading the file |
+| `echo 'set disableAllHooks in .claude/settings.local.json' \| wc -c` | `/tmp` | allow | control: text that only mentions the key and the file |
+| `echo '{}' > @HOME@/proj/.claude/notes.json` | `/tmp` | allow | control: another file in the same directory |
 
 ## Known limits
 

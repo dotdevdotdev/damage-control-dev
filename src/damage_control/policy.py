@@ -17,6 +17,7 @@ Control-plane and protected-path checks run BEFORE the kill switch; nothing the
 profile or the context supplies can loosen them.
 """
 
+import os
 import re
 from typing import Any, Dict, NamedTuple, Optional, Tuple
 
@@ -58,6 +59,8 @@ class ToolCall(NamedTuple):
     tool_input: Optional[Dict[str, Any]] = None  # mcp: the call's arguments
     cwd: Optional[str] = None  # shell / write / edit: the directory the harness reports
     content: str = ""  # write / edit: the text being written (Write ``content``, Edit ``new_string``, a notebook cell)
+    old: str = ""  # edit: the text ``content`` replaces (Edit ``old_string``)
+    replace_all: bool = False  # edit: every occurrence of ``old`` is replaced
 
 
 class Context(NamedTuple):
@@ -150,6 +153,9 @@ class Guard:
             )
         if self.config["safety"].get("enabled", True) is False:
             return Verdict(ALLOW, disabled=True, audit=_audit("disabled", call.tool_name, path))
+        settings = self._settings_write(call, path)
+        if settings is not None:
+            return self._finish(call, ctx, path, settings, f"Write: {path}", synthesized=False)
         if call.kind in _SCRIPT_AUTHORING and call.content:
             # Script-looking content is judged like the commands it holds (script indirection):
             # an ASK, never a block — writing runs nothing, and running the file is gated.
@@ -159,6 +165,34 @@ class Guard:
             if finding:
                 return self._finish(call, ctx, path, finding, f"Write: {path}", synthesized=False)
         return _allowed(call.tool_name, path)
+
+    def _settings_write(self, call: ToolCall, path: str) -> Optional[Dict[str, Any]]:
+        """An engine-shaped finding when ``call`` writes a Claude Code settings file unsafely, else ``None``.
+
+        The same judgment the ``ConfigChange`` guard makes (``configguard``), made before the write:
+        the file as it would stand. A block for what switches hooks off or redirects the policy, an ask
+        for any other change to the ``hooks`` key, an ask that bypass does not lift when the result
+        cannot be known.
+        """
+        if call.kind not in _SCRIPT_AUTHORING:
+            return None
+        from damage_control import configguard, install
+
+        target = path if os.path.isabs(path) else os.path.join(call.cwd or "", path)
+        if not any(configguard.is_settings_path(form) for form in self.e._path_forms(target)):
+            return None
+        text = configguard.resulting_text(target, call.content, call.old, call.replace_all,
+                                          whole_file=call.kind == "write")
+        found = configguard.settings_write(target, text, self.e.PROFILE, install.recorded_registration,
+                                           install.registration_problems)
+        if found.refuse:
+            return {"decision": BLOCK, "reason": "; ".join(found.refuse), "id": configguard.WRITE_RULE_ID}
+        if found.unreadable:
+            return {"decision": ASK, "reason": "; ".join(found.unreadable), "id": configguard.WRITE_RULE_ID,
+                    "unverifiable": True}
+        if found.confirm:
+            return {"decision": ASK, "reason": "; ".join(found.confirm), "id": configguard.WRITE_RULE_ID}
+        return None
 
     # -- Shell commands, and the shell command an outbound MCP tool runs --------
 
