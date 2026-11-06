@@ -9,8 +9,8 @@
   },
   {
    "id": "git.git-clean-with-force-directory-flags",
-   "pattern": "\\bgit\\s+clean\\s+(?!(?:[^;&|]*\\s)?(?:-(?!-)[a-z]*n[a-z]*(?=[\\s;&|)`]|$)|--dry-run\\b))(?:(?!--(?:\\s|$))[^\\s;&|]+\\s+)*?(?:-(?!-)[a-z]*[fd][a-z]*|--force)(?=[\\s;&|)`]|$)",
-   "pattern_src": "\\bgit\\s+clean\\s+(?!(?:[^;&|]*\\s)?(?:-(?!-)[a-z]*n[a-z]*(?=[\\s;&|)`]|$)|--dry-run\\b)){ARGS}(?:-(?!-)[a-z]*[fd][a-z]*|--force)(?=[\\s;&|)`]|$)",
+   "pattern": "\\bgit\\s+clean\\s+(?!(?:[^;&|]*\\s)?(?:-(?!-)[a-z]*n[a-z]*(?=[\\s;&|)`]|$)|--d[a-z-]*))(?:(?!--(?:\\s|$))[^\\s;&|]+\\s+)*?(?:-(?!-)[a-z]*[fd][a-z]*|--force)(?=[\\s;&|)`]|$)",
+   "pattern_src": "\\bgit\\s+clean\\s+(?!(?:[^;&|]*\\s)?(?:-(?!-)[a-z]*n[a-z]*(?=[\\s;&|)`]|$)|--d[a-z-]*)){ARGS}(?:-(?!-)[a-z]*[fd][a-z]*|--force)(?=[\\s;&|)`]|$)",
    "reason": "git clean with force/directory flags",
    "anchored": true
   },
@@ -76,6 +76,34 @@
    "id": "git.config-set-redirect-key",
    "pattern": "\\bgit\\s+config\\b(?![^;&|]*\\s(?:--(?:get|unset|list|edit)|-l\\b|-e\\b))[^;&|]*?\\s(?:core\\.(?:worktree|hookspath)|include\\.path|includeif\\.\\S+\\.path)\\s+\\S",
    "reason": "git config redirects the worktree, hooks dir, or an included config",
+   "ask": true,
+   "anchored": true
+  },
+  {
+   "id": "git.switch-discard-changes",
+   "pattern": "\\bgit\\s+switch\\s+--discard-changes\\b",
+   "reason": "git switch discards uncommitted changes",
+   "ask": true,
+   "anchored": true
+  },
+  {
+   "id": "git.restore-worktree-whole-tree",
+   "pattern": "\\bgit\\s+restore\\s+--worktree\\s+\\.(?=[\\s;&|)`]|$)",
+   "reason": "git restore overwrites the working tree (uncommitted changes are lost)",
+   "ask": true,
+   "anchored": true
+  },
+  {
+   "id": "git.worktree-remove-force",
+   "pattern": "\\bgit\\s+worktree\\s+remove\\s+--force\\b",
+   "reason": "git worktree remove --force drops a worktree with its uncommitted changes",
+   "ask": true,
+   "anchored": true
+  },
+  {
+   "id": "git.discard-assembled-at-run-time",
+   "pattern": "\\bgit\\s+(?:reset|clean|switch|restore|checkout|worktree\\s+remove)\\s+--assembled-at-run-time\\b",
+   "reason": "git options are assembled at run time and can discard uncommitted changes",
    "ask": true,
    "anchored": true
   },

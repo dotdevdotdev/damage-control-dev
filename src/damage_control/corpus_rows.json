@@ -9,7 +9,8 @@
     "path-spelling": "One protected path written relative, with ~, with a variable or in a brace group.",
     "script-indirection": "The operation held in a file the command runs.",
     "data-operand": "Text a file holds, where the command only names the file as an argument and does not run it.",
-    "quoted-text": "A protected path written inside text a command only prints, sends or writes, against the same text where the command opens it."
+    "quoted-text": "A protected path written inside text a command only prints, sends or writes, against the same text where the command opens it.",
+    "option-spelling": "An option of a command that discards uncommitted work written as an abbreviation, a cluster, a negated form or an alias, or left to run time."
   },
   "files": {
     "bad.sh": "#!/bin/sh\nrm -rf /\n",
@@ -156,6 +157,35 @@
     {"id": "script-indirection-20", "class": "script-indirection", "command": "uvx --with requests python3 plain.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "control: a script that holds nothing guarded"},
     {"id": "data-operand-11", "class": "data-operand", "command": "python3 -Bc 'print(1)' data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "option grammar: a cluster that carries the program"},
     {"id": "data-operand-12", "class": "data-operand", "command": "perl -lne 'print' data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "option grammar: a cluster that carries the program"},
-    {"id": "data-operand-13", "class": "data-operand", "command": "ruby -ne 'puts' data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "option grammar: a cluster that carries the program"}
+    {"id": "data-operand-13", "class": "data-operand", "command": "ruby -ne 'puts' data.yaml", "cwd": "@ROOT@", "verdict": "allow", "source": "option grammar: a cluster that carries the program"},
+    {"id": "option-spelling-01", "class": "option-spelling", "command": "git reset --har", "cwd": "/tmp", "verdict": "block", "source": "abbreviation of --hard"},
+    {"id": "option-spelling-02", "class": "option-spelling", "command": "git reset --h", "cwd": "/tmp", "verdict": "block", "source": "shortest abbreviation of --hard"},
+    {"id": "option-spelling-03", "class": "option-spelling", "command": "git -C . reset --ha", "cwd": "/tmp", "verdict": "block", "source": "abbreviation behind a global option"},
+    {"id": "option-spelling-04", "class": "option-spelling", "command": "git clean --for", "cwd": "/tmp", "verdict": "block", "source": "abbreviation of --force"},
+    {"id": "option-spelling-05", "class": "option-spelling", "command": "git clean -n --no-dry-run -f", "cwd": "/tmp", "verdict": "block", "source": "a negated dry run"},
+    {"id": "option-spelling-06", "class": "option-spelling", "command": "git -c alias.x='reset --hard' x", "cwd": "/tmp", "verdict": "block", "source": "alias naming the operation"},
+    {"id": "option-spelling-07", "class": "option-spelling", "command": "git -c alias.a=b -c alias.b='clean -f' a", "cwd": "/tmp", "verdict": "block", "source": "alias chain"},
+    {"id": "option-spelling-08", "class": "option-spelling", "command": "git switch -f main", "cwd": "/tmp", "verdict": "ask", "source": "short form of --discard-changes"},
+    {"id": "option-spelling-09", "class": "option-spelling", "command": "git switch --discard main", "cwd": "/tmp", "verdict": "ask", "source": "abbreviation of --discard-changes"},
+    {"id": "option-spelling-10", "class": "option-spelling", "command": "git switch -fc newbranch", "cwd": "/tmp", "verdict": "ask", "source": "short-option cluster"},
+    {"id": "option-spelling-11", "class": "option-spelling", "command": "git restore --worktree .", "cwd": "/tmp", "verdict": "ask", "source": "explicit working-tree restore"},
+    {"id": "option-spelling-12", "class": "option-spelling", "command": "git restore -SW .", "cwd": "/tmp", "verdict": "ask", "source": "short-option cluster restoring both"},
+    {"id": "option-spelling-13", "class": "option-spelling", "command": "git restore --source=HEAD --staged --worktree .", "cwd": "/tmp", "verdict": "ask", "source": "restore from a tree into both"},
+    {"id": "option-spelling-14", "class": "option-spelling", "command": "git restore '*'", "cwd": "/tmp", "verdict": "ask", "source": "whole-tree pathspec"},
+    {"id": "option-spelling-15", "class": "option-spelling", "command": "git restore ':(top)*'", "cwd": "/tmp", "verdict": "ask", "source": "whole-tree pathspec magic"},
+    {"id": "option-spelling-16", "class": "option-spelling", "command": "git worktree remove --force ../wt", "cwd": "/tmp", "verdict": "ask", "source": "forced removal of a worktree"},
+    {"id": "option-spelling-17", "class": "option-spelling", "command": "git worktree remove --fo ../wt", "cwd": "/tmp", "verdict": "ask", "source": "abbreviated forced removal"},
+    {"id": "option-spelling-18", "class": "option-spelling", "command": "git -c alias.x='switch -f' x main", "cwd": "/tmp", "verdict": "ask", "source": "alias naming the operation"},
+    {"id": "option-spelling-19", "class": "option-spelling", "command": "echo --hard | xargs git reset", "cwd": "/tmp", "verdict": "ask", "source": "options assembled at run time"},
+    {"id": "option-spelling-20", "class": "option-spelling", "command": "git reset --soft HEAD~1", "cwd": "/tmp", "verdict": "allow", "source": "control: soft reset"},
+    {"id": "option-spelling-21", "class": "option-spelling", "command": "git reset --so HEAD~1", "cwd": "/tmp", "verdict": "allow", "source": "control: abbreviated soft reset"},
+    {"id": "option-spelling-22", "class": "option-spelling", "command": "git clean -n", "cwd": "/tmp", "verdict": "allow", "source": "control: dry run"},
+    {"id": "option-spelling-23", "class": "option-spelling", "command": "git clean --d --for", "cwd": "/tmp", "verdict": "allow", "source": "control: abbreviated dry run with abbreviated force"},
+    {"id": "option-spelling-24", "class": "option-spelling", "command": "git switch main", "cwd": "/tmp", "verdict": "allow", "source": "control: plain switch"},
+    {"id": "option-spelling-25", "class": "option-spelling", "command": "git switch --no-discard-changes main", "cwd": "/tmp", "verdict": "allow", "source": "control: negated option"},
+    {"id": "option-spelling-26", "class": "option-spelling", "command": "git restore --staged .", "cwd": "/tmp", "verdict": "allow", "source": "control: index-only restore"},
+    {"id": "option-spelling-27", "class": "option-spelling", "command": "git restore file.txt", "cwd": "/tmp", "verdict": "allow", "source": "control: one file"},
+    {"id": "option-spelling-28", "class": "option-spelling", "command": "git worktree remove ../wt", "cwd": "/tmp", "verdict": "allow", "source": "control: removal without force"},
+    {"id": "option-spelling-29", "class": "option-spelling", "command": "echo 'git reset --har; git clean --for; git restore -W .'", "cwd": "/tmp", "verdict": "allow", "source": "control: text that only mentions the operations"}
   ]
 }
