@@ -12,6 +12,7 @@ Start with the [README](../README.md) for install and the commands you will use 
 | [Sandbox pairing](sandbox.md) | How the hook and Claude Code's sandbox cover each other's gaps; a recommended settings snippet; what `doctor` reports. |
 | [Rule authoring](rule-authoring.md) | Writing rules, tooldefs and path lists; the policy file; groups and packs; the path allowlist. |
 | [Settings-change guard](config-change.md) | The `ConfigChange` hook: what Claude Code sends, which edits fire it, what is blocked and what is only audited, and how `status` reports it. |
+| [Hooks research](hooks-research.md) | Every Claude Code hook event, handler type and registration surface, what was observed live, which to use, and the proposed next batch of issues. |
 | [Extending](extending.md) | Host profiles, how the hook is registered and why it fails closed, break-glass, the installer. |
 
 Also: [SECURITY.md](../SECURITY.md) (reporting a vulnerability) and [CONTRIBUTING.md](../CONTRIBUTING.md).
