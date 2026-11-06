@@ -30,6 +30,7 @@ BLOCK = [
     "c=claude; $c --bare -p hi", "x=--bare; claude $x -p hi",
     # the option is the prompt-looking word: the parser still reads it as an option
     "claude -p --bare",
+    "claude${IFS}--bare${IFS}-p${IFS}hi", "claude --bare$IFS-p hi",
 ]
 ASK = [
     "claude --setting-sources user -p hi", "claude --setting-sources=user,project -p hi",
@@ -39,6 +40,7 @@ ASK = [
     "CLAUDE_CONFIG_DIR=/tmp/cfg claude -p hi", "env CLAUDE_CONFIG_DIR=/tmp/cfg claude -p hi",
     "export CLAUDE_CONFIG_DIR=/tmp/cfg; claude -p hi", "CLAUDE_CONFIG_DIR=/tmp/cfg sh -c 'claude -p hi'",
     "sudo env CLAUDE_CONFIG_DIR=/tmp/cfg claude -p hi",
+    "claude --setting-sources user$IFS-p hi", "claude --setting-sources${IFS}user -p hi",
 ]
 ALLOW = [
     "claude -p 'summarize this'", "claude", "claude --version", "claude mcp list", "claude --model sonnet -p hi",

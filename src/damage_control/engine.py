@@ -4944,6 +4944,8 @@ def _claude_invocation(words: List[str]) -> Optional[Tuple[List[str], List[str]]
     The command is found past launchers and wrappers (``env``, ``sudo``, ``uv run``, ``npx``); the
     ``NAME=value`` words in front of it are the environment the child gets.
     """
+    if any("IFS" in w for w in words):  # ``claude$IFS--bare``: the shell splits the word where the separator is
+        words = [p for w in words for p in (shellexpand.resolve_separator_variable(w).text.split() or [w] if "IFS" in w else [w])]
     at = _wrapped_command_index(words)
     if at is None:
         return None
