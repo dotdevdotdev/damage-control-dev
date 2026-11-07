@@ -57,8 +57,8 @@ DECISIONS: Tuple[ToolDecision, ...] = (
        OUT_OF_SCOPE, "the recipient is the user or an agent in the same session; nothing leaves for a third party"),
     _d("AskUserQuestion, EnterPlanMode, ExitPlanMode", "nothing: they ask the user or switch the permission mode "
        "toward more questions", OUT_OF_SCOPE, "the user decides, and nothing is read or written"),
-    _d("TodoWrite, TaskCreate, TaskUpdate, TaskGet, TaskList, TaskStop (alias KillShell, KillBash)",
-       "nothing beyond bookkeeping in the session; TaskStop ends a background task", OUT_OF_SCOPE,
+    _d("TodoWrite, TaskCreate, TaskUpdate, TaskGet, TaskList, TaskStop",
+       "nothing beyond bookkeeping in the session; TaskStop (also called KillShell or KillBash) ends a background task", OUT_OF_SCOPE,
        "no file, command or network access"),
     _d("EnterWorktree, ExitWorktree", "creates or leaves a git worktree and changes the working directory",
        OUT_OF_SCOPE, "the commands that follow are judged against the new directory; creating a worktree does not "
