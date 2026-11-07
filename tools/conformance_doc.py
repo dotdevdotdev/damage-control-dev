@@ -24,6 +24,16 @@ def cell(text: str) -> str:
     return "`" + text.replace("|", "\\|").replace("`", "'") + "`"
 
 
+def setup(row: dict) -> str:
+    """What a row needs beyond its command: the packs enabled in the throwaway home and the variables set."""
+    parts = []
+    if row.get("packs"):
+        parts.append("packs on: " + ", ".join(row["packs"]))
+    if row.get("env"):
+        parts.append("set: " + ", ".join(f"{k}={v}" for k, v in sorted(row["env"].items())))
+    return f" ({'; '.join(parts)})" if parts else ""
+
+
 def render() -> str:
     data = corpus.load()
     rows = data["rows"]
@@ -40,7 +50,8 @@ def render() -> str:
         "",
         "Verdicts are `block` (refused), `ask` (the user is asked) and `allow`. In a command, `@HOME@` is the home",
         "directory the hook sees and `@ROOT@` is a scratch directory holding the script files a row runs. A row whose",
-        "source says *control* is the same spelling on a harmless command: it must stay allowed.",
+        "source says *control* is the same spelling on a harmless command: it must stay allowed. A row that needs a pack",
+        "or an environment variable says so after its source; every other row runs with the default groups and no packs.",
         "",
         "| Class | Rows | What it covers |",
         "|---|---|---|",
@@ -50,7 +61,7 @@ def render() -> str:
     out.append(f"| **Total** | {len(rows)} | |")
     for name, description in data["classes"].items():
         out += ["", f"## {name}", "", description, "", "| Command | Directory | Verdict | Source |", "|---|---|---|---|"]
-        out += [f"| {cell(r['command'])} | {cell(r['cwd'])} | {r['verdict']} | {r['source']} |" for r in rows if r["class"] == name]
+        out += [f"| {cell(r['command'])} | {cell(r['cwd'])} | {r['verdict']} | {r['source']}{setup(r)} |" for r in rows if r["class"] == name]
     out += [
         "",
         "## Known limits",

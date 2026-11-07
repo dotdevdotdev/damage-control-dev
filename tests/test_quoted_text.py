@@ -6,6 +6,7 @@ prose; each must be allowed. The second table puts the same path where the comma
 where the text can still become a command's operand or run, and each must still be blocked.
 """
 
+from damage_control import corpus
 from hookrun import run_hook
 
 PATH = "~/.ssh/id_rsa"
@@ -46,7 +47,9 @@ OPERANDS_BLOCKED = [
 
 
 def _verdicts(commands, tmp_path):
-    return {c: run_hook("bash", "Bash", {"command": c}, str(tmp_path), tmp_path) for c in commands}
+    # The messaging commands are named by a pack's profile fragment, so the pack that names them is on.
+    home = corpus.home_for(tmp_path / "home", ["agentwire"])
+    return {c: run_hook("bash", "Bash", {"command": c}, str(tmp_path), home) for c in commands}
 
 
 def test_path_named_in_printed_or_sent_text_is_allowed(tmp_path):

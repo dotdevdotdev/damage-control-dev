@@ -18,7 +18,7 @@ conformance corpus (`src/damage_control/corpus_rows.json`, rendered in [docs/con
 An issue with the row is enough; a pull request with the row and its fix is better.
 
 A row has the keys `id`, `class`, `command`, `cwd`, `verdict` (`block`, `ask` or `allow`) and `source`
-(where the form came from), and optionally `tool` (`Bash` by default, or `PowerShell` or `Monitor`, the tool that carries the command). A row is a respelling of an operation the rules already judge, so give the
+(where the form came from), and optionally `tool` (`Bash` by default, or `PowerShell` or `Monitor`, the tool that carries the command). A row for a pack's rule also gives `packs` (the packs enabled in the row's throwaway home) and, for an unattended case, `env` (variables set for the hook); give the same command with the pack off as a control. A row is a respelling of an operation the rules already judge, so give the
 verdict the plain command gets, and add a control row (same spelling, harmless command, `allow`) when the
 spelling alone must not trigger anything. Use `@HOME@` for the home directory the hook sees and `@ROOT@`
 for the scratch tree built from the `files` map.

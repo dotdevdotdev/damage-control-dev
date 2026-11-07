@@ -1,6 +1,6 @@
 """Quoted text a command only prints or sends is data, not a path the command touches.
 
-``echo "see ~/.ssh/id_rsa"`` and ``agentwire notify-parent "moved ~/.ssh/id_rsa"`` name a path in
+``echo "see ~/.ssh/id_rsa"`` and ``notifier send "moved ~/.ssh/id_rsa"`` name a path in
 prose; the verb prints or sends the string and opens nothing. The zero-access mention rule reads
 every spelling of a guarded path anywhere in the command, so it needs this text out of the way —
 the way :func:`damage_control.engine.mask_prose_operands` already does for ``git commit -m`` and
@@ -10,7 +10,7 @@ The decision is by what the verb does with its arguments, never by how the argum
 
 * ``echo`` / ``printf`` print every quoted argument. Never masked when the command pipes, groups,
   or substitutes — the text could then become another command's operand (``| xargs cat``).
-* ``agentwire notify-parent`` / ``agentwire msg send`` send their quoted positional text. The
+* The profile's ``message_commands`` send their quoted positional text. The
   value of ``--body-file`` is a path the command reads, so it stays visible.
 * A heredoc body feeding ``cat`` / ``tee`` / a git or gh message verb is written or printed text.
   A body feeding a shell, an interpreter or a pipe stays visible.
@@ -26,18 +26,19 @@ from typing import List, Tuple
 
 PLACEHOLDER = '"DATA"'
 _PRINTERS = {"echo", "printf"}
-_AGENTWIRE_MESSAGE_VERBS = (("notify-parent",), ("msg", "send"))
 _PATH_FLAGS = {"--body-file"}
 _HEREDOC_WRITERS = {"cat", "tee"}
 _SUBSTITUTION_RE = re.compile(r"\$\(|`|<\(|>\(")
 _MARKER_SEGMENT_END_RE = re.compile(r"[;&|\n(`]")
 
 
-def _is_agentwire_message(texts: List[str]) -> bool:
-    if os.path.basename(texts[0]) != "agentwire":
-        return False
-    rest = texts[1:3]
-    return any(tuple(rest[: len(verb)]) == verb for verb in _AGENTWIRE_MESSAGE_VERBS)
+def _is_message_command(texts: List[str]) -> bool:
+    """A command the profile names as one that sends its quoted positional text (``Profile.message_commands``)."""
+    from . import engine
+
+    head = os.path.basename(texts[0])
+    return any(len(argv) <= len(texts) and head == argv[0] and tuple(texts[1:len(argv)]) == argv[1:]
+               for argv in engine.PROFILE.message_commands)
 
 
 def _quoted_argument_spans(command: str) -> List[Tuple[int, int]]:
@@ -67,7 +68,7 @@ def _quoted_argument_spans(command: str) -> List[Tuple[int, int]]:
             return
         texts = [w[2] for w in words]
         printer = os.path.basename(texts[0]) in _PRINTERS
-        if not printer and not _is_agentwire_message(texts):
+        if not printer and not _is_message_command(texts):
             return
         for k, (s, e, raw) in enumerate(words):
             if k == 0 or not engine._pure_quoted_value(raw):

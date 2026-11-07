@@ -4,7 +4,7 @@ For people who embed damage control in another tool (a **host**) or who want to 
 
 - [Profiles](#profiles)
 - [Example: a host called acme](#example-a-host-called-acme)
-- [Example: AgentWire, an embedding host](#example-agentwire-an-embedding-host)
+- [Packs that carry a profile fragment](#packs-that-carry-a-profile-fragment)
 - [The decision seam: Guard and adapter](#the-decision-seam-guard-and-adapter)
 - [Registration](#registration)
 - [Why the hook fails closed](#why-the-hook-fails-closed)
@@ -93,9 +93,9 @@ The last line of `check` shows why the profile must be named in the registration
 
 `init` refuses to rewrite an entry that another installer owns. After the acme install, a plain `damage-control-dev init` stops with `REFUSED: … already registers damage control for profile … not (none): another installer owns it`, so two installers cannot silently take each other's registration.
 
-## Example: AgentWire, an embedding host
+## Packs that carry a profile fragment
 
-AgentWire, a terminal-session manager for AI agents, embeds damage control through exactly this API. Its installer builds a `Profile` carrying its own config files, its own protected commands, its scheduler's unattended environment variables, its own rule files and its default packs. It then writes the manifest and runs this package's `init --profile` against it. The package knows nothing about AgentWire; the manifest is the whole interface.
+A bundled pack can bring part of a profile with it: a top-level `profile:` section in its rules file, merged into the host profile only while the pack is on. The [`agentwire` pack](agentwire-pack.md) is the example. It adds protected paths and commands, the unattended-session names and default grants, and an MCP command template, so a plain install gets them by running `packs enable agentwire` and no installer is involved. The engine holds no name of any orchestrator; the pack's own file is where the name lives.
 
 ## The decision seam: Guard and adapter
 

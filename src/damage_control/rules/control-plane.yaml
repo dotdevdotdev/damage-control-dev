@@ -5,13 +5,13 @@
 # disable safety, act, and re-enable, bypassing everything.
 #
 # The REAL guarantee lives in code: ``check_protected_command`` /
-# ``check_protected_path`` in ``agentwire/safety/_core.py`` block writes to
+# ``check_protected_path`` in ``engine.py`` block writes to
 # these paths BEFORE the ``# allow:`` escape hatch and BEFORE the kill switch,
 # so neither can override them. Only the user's ``allowedPaths`` allowlist (a
 # host-side opt-in) re-permits a path.
 #
 # Listing them here as ``readOnlyPaths`` too is defense-in-depth + visibility
-# (they show up in ``agentwire safety status`` rule counts). The readOnly tier
+# (they show up in ``status`` rule counts). The readOnly tier
 # is escape-hatch-bypassable on its own — the code-level check is what makes the
 # protection absolute.
 

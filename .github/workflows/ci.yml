@@ -29,8 +29,16 @@ jobs:
       - name: No host-specific text or dangling issue numbers in the docs
         run: |
           # --safe-mode is claude's flag, not a claim; every other hit fails
-          if grep -rniE 'agentwire|#[0-9]{3,}|\b(secure|safe)\b' docs/threat-model.md docs/rule-authoring.md docs/coverage.md docs/index.md docs/sandbox.md docs/conformance.md | grep -v -e '--safe-mode'; then exit 1; fi
-          # extending.md may name AgentWire once, in its labelled example section
+          if grep -rniE 'agentwire|#[0-9]{3,}|\b(secure|safe)\b' docs/threat-model.md docs/coverage.md docs/sandbox.md | grep -v -e '--safe-mode'; then exit 1; fi
+          if grep -rniE '#[0-9]{3,}|\b(secure|safe)\b' docs/rule-authoring.md docs/index.md docs/conformance.md | grep -v -e '--safe-mode'; then exit 1; fi
+          # The optional pack is named only where it is legitimately listed: its own page, one row of
+          # index.md, the packs line of rule-authoring.md, and conformance.md's generated pack-* sections.
+          if grep -rliE 'agentwire' docs | grep -vE '^docs/(agentwire-pack|index|rule-authoring|extending|conformance)\.md$'; then exit 1; fi
+          test "$(grep -ci agentwire docs/index.md)" -le 1
+          test "$(grep -ci agentwire docs/rule-authoring.md)" -le 1
+          # conformance.md: everything outside the pack-* class rows and their sections
+          if awk '/^## pack-/{skip=1; next} /^## /{skip=0} !skip && !/^\| \[pack-/' docs/conformance.md | grep -niE 'agentwire'; then exit 1; fi
+          # extending.md may name the pack in its labelled section only
           test "$(grep -ci agentwire docs/extending.md)" -le 3
           if grep -nE '#[0-9]{3,}' docs/extending.md; then exit 1; fi
 

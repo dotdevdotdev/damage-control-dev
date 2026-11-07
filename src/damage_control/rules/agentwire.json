@@ -1,0 +1,238 @@
+{
+ "pack": {
+  "name": "agentwire",
+  "description": "agentwire orchestrator state, secrets, outbound sends and session teardown",
+  "binaries": [
+   "agentwire"
+  ]
+ },
+ "profile": {
+  "protected_paths": [
+   "~/.agentwire/damagecontrol.yml",
+   "~/.agentwire/damagecontrol-profile.json",
+   "~/.agentwire/hooks/damage-control/*.py",
+   "~/.agentwire/damage-control/*.yaml",
+   "~/.agentwire/damage-control/*.json",
+   "~/.agentwire/bin/damage-control-breakglass",
+   "~/.agentwire/damagecontrol-install.json",
+   "~/.agentwire/scheduler.yaml",
+   "~/.agentwire/config.yaml",
+   "*.agentwire.tasks.yml"
+  ],
+  "protected_path_reasons": [
+   [
+    "*.agentwire.tasks.yml",
+    "protected task-execution control-plane file (host-owned) — draft to .agentwire.tasks.proposed.yml instead, then ask the host to run `agentwire tasks review` and `agentwire tasks promote`"
+   ]
+  ],
+  "control_plane_words": [
+   ".agentwire"
+  ],
+  "benign_path_patterns": [
+   "(?:^|/)\\.agentwire/(?:wiki|artifacts)(?:/|$)"
+  ],
+  "protected_commands": [
+   [
+    "\\bagentwire\\s+tasks\\s+promote\\b",
+    "agentwire tasks promote writes the protected .agentwire.tasks.yml — host-only, run it from your own terminal (not through an agent)."
+   ],
+   [
+    "\\bagentwire\\s+safety\\s+(?:packs|groups)\\s+(?:enable|disable)\\b",
+    "agentwire safety packs/groups enable|disable changes damage-control policy — host-only, run it from your own terminal (not through an agent)."
+   ],
+   [
+    "\\bagentwire\\s+safety\\s+migrate\\b(?!.*--dry-run)",
+    "agentwire safety migrate rewrites damage-control registrations and rule files — host-only, run it from your own terminal (not through an agent)."
+   ]
+  ],
+  "message_commands": [
+   [
+    "agentwire",
+    "notify-parent"
+   ],
+   [
+    "agentwire",
+    "msg",
+    "send"
+   ]
+  ],
+  "data_consumers": [
+   "agentwire"
+  ],
+  "unattended_env": "AGENTWIRE_UNATTENDED",
+  "unattended_allow_env": "AGENTWIRE_UNATTENDED_ALLOW",
+  "unattended_grant_hint": "To permit this for an unattended task, add rule id '{rule_id}' to its .agentwire.tasks.yml task `unattended_allow`",
+  "default_unattended_allow": [
+   "git.add",
+   "git.add-u",
+   "git.commit",
+   "git.push",
+   "gh.pr-create",
+   "outbound.agentwire-email",
+   "tooldef.uv-run-a-script-in-project-environment",
+   "tooldef.uv-run-a-command-in-project-environment"
+  ],
+  "audit": {
+   "session_env": "AGENTWIRE_SESSION_ID",
+   "agent_env": "AGENTWIRE_AGENT_ID"
+  },
+  "mcp_command_templates": [
+   [
+    "email_send",
+    [
+     "agentwire",
+     "email"
+    ],
+    [
+     [
+      "to",
+      "--to",
+      true
+     ],
+     [
+      "subject",
+      "--subject",
+      false
+     ]
+    ]
+   ],
+   [
+    "quo_send",
+    [
+     "agentwire",
+     "quo"
+    ],
+    [
+     [
+      "to",
+      "--to",
+      false
+     ]
+    ]
+   ]
+  ]
+ },
+ "readOnlyPaths": [
+  "~/.agentwire/damagecontrol.yml",
+  "~/.agentwire/hooks/damage-control/*.py",
+  "~/.agentwire/damage-control/*.yaml",
+  "~/.agentwire/damagecontrol-profile.json",
+  "~/.agentwire/damage-control/*.json",
+  "~/.agentwire/bin/damage-control-breakglass",
+  "~/.agentwire/damagecontrol-install.json",
+  "~/.agentwire/scheduler.yaml",
+  "~/.agentwire/config.yaml",
+  "*.agentwire.tasks.yml"
+ ],
+ "zeroAccessPaths": [
+  "~/.agentwire/credentials/",
+  "~/.agentwire/api-keys/",
+  "~/.agentwire/secrets/",
+  "~/.agentwire/tokens/",
+  "~/.agentwire/.env",
+  "~/.agentwire/*.key",
+  "~/.agentwire/*.pem"
+ ],
+ "noDeletePaths": [
+  "~/.agentwire/",
+  "~/.agentwire/sessions/",
+  "~/.agentwire/hooks/",
+  "~/.agentwire/settings.json",
+  ".agentwire/",
+  ".agentwire/session.json"
+ ],
+ "allowedPaths": [
+  {
+   "path": "~/.agentwire/.env",
+   "allow": [
+    "read",
+    "write",
+    "edit"
+   ]
+  }
+ ],
+ "bashToolPatterns": [
+  {
+   "id": "agentwire.tmux-kill-session-targeting-agentwire-sessions",
+   "pattern": "\\btmux\\s+kill-session\\s+.*\\bagentwire",
+   "reason": "tmux kill-session targeting AgentWire sessions",
+   "anchored": true
+  },
+  {
+   "id": "agentwire.agentwire-destroy-if-implemented-destroys-agentwire-state",
+   "pattern": "\\bagentwire\\s+destroy\\b",
+   "reason": "agentwire destroy (if implemented - destroys AgentWire state)",
+   "anchored": true
+  },
+  {
+   "id": "agentwire.agentwire-force-remove-operations",
+   "pattern": "\\bagentwire\\s+.*--force.*remove\\b",
+   "reason": "agentwire force remove operations",
+   "anchored": true
+  },
+  {
+   "id": "agentwire.recursive-forced-rm-of-the-agentwire-directory-itself-destro",
+   "pattern": "\\brm\\s+(?:[^;&|]*\\s)?-(?:[a-zA-Z]*[rRf][a-zA-Z]*|-recursive|-force)\\b[^;&|]*\\s(?:(?:~|\\$HOME|/Users/[^/\\s]+|/home/[^/\\s]+)/)?\\.agentwire/?(?=\\s|$|[;&|])",
+   "reason": "Recursive/forced rm of the .agentwire directory itself (destroys AgentWire state)",
+   "anchored": true
+  },
+  {
+   "id": "outbound.agentwire-email",
+   "pattern": "\\bagentwire\\s+email\\b",
+   "reason": "agentwire email (sends an external email via Resend)",
+   "ask": true,
+   "anchored": true
+  },
+  {
+   "id": "outbound.agentwire-quo",
+   "pattern": "\\bagentwire\\s+quo\\b",
+   "reason": "agentwire quo (sends an external SMS via Quo/OpenPhone)",
+   "ask": true,
+   "anchored": true
+  }
+ ],
+ "mcpToolPolicies": [
+  {
+   "tool": "mcp__agentwire__worktree_remove",
+   "id": "mcp.agentwire.worktree-remove",
+   "tier": "ask",
+   "mutates": true,
+   "reason": "worktree_remove tears down a session's worktree and can delete its branch"
+  },
+  {
+   "tool": "mcp__agentwire__worktree_prune",
+   "id": "mcp.agentwire.worktree-prune",
+   "tier": "ask",
+   "mutates": true,
+   "reason": "worktree_prune bulk-removes worktrees and can delete merged branches"
+  },
+  {
+   "tool": "mcp__agentwire__session_kill",
+   "id": "mcp.agentwire.session-kill",
+   "tier": "ask",
+   "mutates": true,
+   "reason": "session_kill terminates another agent session"
+  },
+  {
+   "tool": "mcp__agentwire__pane_kill",
+   "id": "mcp.agentwire.pane-kill",
+   "tier": "ask",
+   "mutates": true,
+   "reason": "pane_kill terminates a worker pane"
+  },
+  {
+   "tool": "mcp__agentwire__session_recreate",
+   "id": "mcp.agentwire.session-recreate",
+   "tier": "ask",
+   "mutates": true,
+   "reason": "session_recreate force-removes the session's worktree and recursively deletes its directory"
+  },
+  {
+   "tool": "mcp__agentwire__machine_remove",
+   "id": "mcp.agentwire.machine-remove",
+   "tier": "ask",
+   "mutates": true,
+   "reason": "machine_remove deregisters a remote machine from the fleet"
+  }
+ ]
+}

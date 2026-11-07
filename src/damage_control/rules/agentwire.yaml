@@ -1,0 +1,198 @@
+# Optional pack `agentwire` (off until a human runs `damage-control-dev packs enable agentwire`).
+#
+# Protections for a machine that runs the agentwire orchestrator (a manager of
+# parallel agent sessions in tmux). Static content only: nothing here calls into
+# agentwire, reads its files or expects it to be installed, and agentwire does
+# not need this library. The two can run together; neither requires the other.
+#
+# One file carries every section the pack needs:
+#   * path lists (state, secrets, control plane),
+#   * command rules (state destruction, outbound sends),
+#   * per-tool policies for the orchestrator's own MCP tools (this file sorts
+#     before `mcp-tools.yaml`, and the first match wins, so they are classified
+#     before the generic write-shaped-name fallback sees them),
+#   * a `profile:` fragment: the code-level protections that no allowlist,
+#     `# ask:` or kill switch can loosen, the unattended-session names and
+#     default grants, and the outbound MCP tool mapping. A fragment only adds
+#     to the host profile, and only while the pack is on.
+
+# The registry entry for this pack: a bundled rules file that no generic group owns
+# is a pack when it says so here.
+pack:
+  name: agentwire
+  description: agentwire orchestrator state, secrets, outbound sends and session teardown
+  binaries: [agentwire]
+
+profile:
+  # Control-plane files an agent must never write: the hook and rule files of an
+  # agentwire install, and the execution-plane configs agentwire runs through
+  # its own shells (scheduler gates, service healthchecks, per-project tasks).
+  protected_paths:
+    - "~/.agentwire/damagecontrol.yml"
+    - "~/.agentwire/damagecontrol-profile.json"
+    - "~/.agentwire/hooks/damage-control/*.py"
+    - "~/.agentwire/damage-control/*.yaml"
+    - "~/.agentwire/damage-control/*.json"
+    - "~/.agentwire/bin/damage-control-breakglass"
+    - "~/.agentwire/damagecontrol-install.json"
+    - "~/.agentwire/scheduler.yaml"
+    - "~/.agentwire/config.yaml"
+    - "*.agentwire.tasks.yml"
+  protected_path_reasons:
+    - ["*.agentwire.tasks.yml",
+       "protected task-execution control-plane file (host-owned) — draft to .agentwire.tasks.proposed.yml instead, then ask the host to run `agentwire tasks review` and `agentwire tasks promote`"]
+  control_plane_words:
+    - ".agentwire"
+  benign_path_patterns:
+    - '(?:^|/)\.agentwire/(?:wiki|artifacts)(?:/|$)'
+  # Commands that change policy or promote a draft into a protected file are
+  # for the person at the terminal, never through an agent.
+  protected_commands:
+    - ['\bagentwire\s+tasks\s+promote\b',
+       "agentwire tasks promote writes the protected .agentwire.tasks.yml — host-only, run it from your own terminal (not through an agent)."]
+    - ['\bagentwire\s+safety\s+(?:packs|groups)\s+(?:enable|disable)\b',
+       "agentwire safety packs/groups enable|disable changes damage-control policy — host-only, run it from your own terminal (not through an agent)."]
+    - ['\bagentwire\s+safety\s+migrate\b(?!.*--dry-run)',
+       "agentwire safety migrate rewrites damage-control registrations and rule files — host-only, run it from your own terminal (not through an agent)."]
+  # Quoted text these commands send is data, not a path they open.
+  message_commands:
+    - ["agentwire", "notify-parent"]
+    - ["agentwire", "msg", "send"]
+  data_consumers:
+    - "agentwire"
+  # A session is unattended when the scheduler stamped this variable; the second
+  # carries the per-task grants. Both are read from the environment of the hook.
+  unattended_env: "AGENTWIRE_UNATTENDED"
+  unattended_allow_env: "AGENTWIRE_UNATTENDED_ALLOW"
+  unattended_grant_hint: "To permit this for an unattended task, add rule id '{rule_id}' to its .agentwire.tasks.yml task `unattended_allow`"
+  # Granted to an unattended session without a per-task entry. Every id is an
+  # `ask`-tier rule; hard blocks are unaffected.
+  default_unattended_allow:
+    - "git.add"
+    - "git.add-u"
+    - "git.commit"
+    - "git.push"
+    - "gh.pr-create"
+    - "outbound.agentwire-email"
+    - "tooldef.uv-run-a-script-in-project-environment"
+    - "tooldef.uv-run-a-command-in-project-environment"
+  audit:
+    session_env: "AGENTWIRE_SESSION_ID"
+    agent_env: "AGENTWIRE_AGENT_ID"
+  # The outbound MCP tools and the shell command they run, so a tool call gets
+  # the verdict (and the grant) of the command.
+  mcp_command_templates:
+    - ["email_send", ["agentwire", "email"], [["to", "--to", true], ["subject", "--subject", false]]]
+    - ["quo_send", ["agentwire", "quo"], [["to", "--to", false]]]
+
+readOnlyPaths:
+  - "~/.agentwire/damagecontrol.yml"
+  - "~/.agentwire/hooks/damage-control/*.py"
+  - "~/.agentwire/damage-control/*.yaml"
+  # The rest of the code-level control plane (the `profile:` fragment above), listed so that
+  # respelled writes (`~/.""agentwire/…`) are judged by the same path tier as the first three.
+  - "~/.agentwire/damagecontrol-profile.json"
+  - "~/.agentwire/damage-control/*.json"
+  - "~/.agentwire/bin/damage-control-breakglass"
+  - "~/.agentwire/damagecontrol-install.json"
+  - "~/.agentwire/scheduler.yaml"
+  - "~/.agentwire/config.yaml"
+  - "*.agentwire.tasks.yml"
+
+zeroAccessPaths:
+  - "~/.agentwire/credentials/"
+  - "~/.agentwire/api-keys/"
+  - "~/.agentwire/secrets/"
+  - "~/.agentwire/tokens/"
+  - "~/.agentwire/.env"
+  - "~/.agentwire/*.key"
+  - "~/.agentwire/*.pem"
+
+noDeletePaths:
+  - ~/.agentwire/
+  - ~/.agentwire/sessions/
+  - ~/.agentwire/hooks/
+  - ~/.agentwire/settings.json
+  - .agentwire/
+  - .agentwire/session.json
+
+allowedPaths:
+  # The owner's token file: read, write and edit stay possible.
+  - path: "~/.agentwire/.env"
+    allow: [read, write, edit]
+
+bashToolPatterns:
+  - id: agentwire.tmux-kill-session-targeting-agentwire-sessions
+    pattern: '\btmux\s+kill-session\s+.*\bagentwire'
+    reason: tmux kill-session targeting AgentWire sessions
+    anchored: true
+
+  - id: agentwire.agentwire-destroy-if-implemented-destroys-agentwire-state
+    pattern: '\bagentwire\s+destroy\b'
+    reason: agentwire destroy (if implemented - destroys AgentWire state)
+    anchored: true
+
+  - id: agentwire.agentwire-force-remove-operations
+    pattern: '\bagentwire\s+.*--force.*remove\b'
+    reason: agentwire force remove operations
+    anchored: true
+
+  # Keyed to the operation, not the spelling: a recursive/forced rm whose TARGET
+  # is the state directory itself. A nested file cannot destroy the directory and
+  # falls through to the ordinary rm rules with an honest reason.
+  - id: agentwire.recursive-forced-rm-of-the-agentwire-directory-itself-destro
+    pattern: '\brm\s+(?:[^;&|]*\s)?-(?:[a-zA-Z]*[rRf][a-zA-Z]*|-recursive|-force)\b[^;&|]*\s(?:(?:~|\$HOME|/Users/[^/\s]+|/home/[^/\s]+)/)?\.agentwire/?(?=\s|$|[;&|])'
+    reason: Recursive/forced rm of the .agentwire directory itself (destroys AgentWire state)
+    anchored: true
+
+  # Outbound channels (email via Resend, SMS via Quo). `ask` semantics as the
+  # generic outbound rules: confirm interactively, fail closed unattended unless
+  # the id is granted.
+  - id: outbound.agentwire-email
+    pattern: '\bagentwire\s+email\b'
+    reason: agentwire email (sends an external email via Resend)
+    ask: true
+    anchored: true
+
+  - id: outbound.agentwire-quo
+    pattern: '\bagentwire\s+quo\b'
+    reason: agentwire quo (sends an external SMS via Quo/OpenPhone)
+    ask: true
+    anchored: true
+
+mcpToolPolicies:
+  - tool: mcp__agentwire__worktree_remove
+    id: mcp.agentwire.worktree-remove
+    tier: ask
+    mutates: true
+    reason: worktree_remove tears down a session's worktree and can delete its branch
+
+  - tool: mcp__agentwire__worktree_prune
+    id: mcp.agentwire.worktree-prune
+    tier: ask
+    mutates: true
+    reason: worktree_prune bulk-removes worktrees and can delete merged branches
+
+  - tool: mcp__agentwire__session_kill
+    id: mcp.agentwire.session-kill
+    tier: ask
+    mutates: true
+    reason: session_kill terminates another agent session
+
+  - tool: mcp__agentwire__pane_kill
+    id: mcp.agentwire.pane-kill
+    tier: ask
+    mutates: true
+    reason: pane_kill terminates a worker pane
+
+  - tool: mcp__agentwire__session_recreate
+    id: mcp.agentwire.session-recreate
+    tier: ask
+    mutates: true
+    reason: session_recreate force-removes the session's worktree and recursively deletes its directory
+
+  - tool: mcp__agentwire__machine_remove
+    id: mcp.agentwire.machine-remove
+    tier: ask
+    mutates: true
+    reason: machine_remove deregisters a remote machine from the fleet

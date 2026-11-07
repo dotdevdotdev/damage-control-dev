@@ -5,16 +5,13 @@
 # UNATTENDED (scheduler) session silently. They're classified `ask: true`:
 #   - interactive bypass/auto session  → allow (no friction, the common case)
 #   - interactive non-bypass session   → confirm prompt
-#   - UNATTENDED (AGENTWIRE_UNATTENDED) → fail closed: block + email owner,
+#   - UNATTENDED (DAMAGE_CONTROL_UNATTENDED) → fail closed: block + email owner,
 #     unless the rule id is on the task's `unattended_allow`.
 #
 # These patterns gate the Bash shell-out (an agent or a scheduled task's `post:`
-# step running `agentwire email`/`quo`). Agents inside agentwire sessions usually
-# send via the MCP tools `email_send` / `quo_send` instead — those are gated by
-# the dedicated `mcp-tool-damage-control.py` PreToolUse hook (#457), which
-# synthesizes the equivalent `agentwire email`/`quo` command and reuses
-# `outbound.agentwire-email` / `outbound.agentwire-quo` below verbatim (same IDs,
-# same `unattended_allow`). See docs/wiki/internals/damage-control.md.
+# step running a send command). An outbound MCP tool can be mapped onto the
+# equivalent shell command by a profile's `mcp_command_templates`, so the tool
+# call is judged by the same rule id and the same `unattended_allow` grant.
 
 bashToolPatterns:
   # ---------------------------------------------------------------------------
