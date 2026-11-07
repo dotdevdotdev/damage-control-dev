@@ -280,7 +280,6 @@ off containers       Docker and Kubernetes
 off infrastructure   Terraform, Pulumi, Serverless, SAM
 off tmux             tmux kill-server / kill-session -a
 off publish          cargo/poetry/twine/pnpm/yarn/gem/mvn publish
-off agentwire        agentwire orchestrator state, secrets, outbound sends and session teardown
 ```
 
 | Kind | On by default | Who can change it |
