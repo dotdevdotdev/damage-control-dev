@@ -92,8 +92,19 @@ class Profile(NamedTuple):
     # Fixed stand-in for ``$HOME`` when judging what a ``~``-anchored entry covers.
     home_alias: str = "/home/damage-control-canonical"
 
+    # Block reason for a protected path, keyed on the exact ``protected_paths`` entry it matched.
+    protected_path_reasons: Tuple[Tuple[str, str], ...] = ()
+
     # --- protected commands (additive; no allowlist, no ``# ask:``, no kill switch) ---
     protected_commands: Tuple[Tuple[str, str], ...] = ()
+
+    # --- command shapes ---------------------------------------------------
+    # Commands that send their quoted positional text somewhere without opening it, as argv
+    # prefixes whose first word is matched by basename (``("notifier", "send")``). Their quoted
+    # text is data, like ``echo``'s.
+    message_commands: Tuple[Tuple[str, ...], ...] = ()
+    # Command names whose next word is data, never a verb to resolve.
+    data_consumers: Tuple[str, ...] = ()
 
     # --- unattended / headless --------------------------------------------
     # The mechanism and scope evaluation live in the engine; the host names the env vars
@@ -137,9 +148,58 @@ class Profile(NamedTuple):
 
 GENERIC = Profile()
 
+# What a pack's rules file may carry under its top-level ``profile:`` key. A fragment only ADDS to
+# the host profile: lists extend it, and a name or hint replaces the generic default only while the
+# host left that default alone. Never the config home, the policy file or anything that could move
+# or loosen the kernel.
+FRAGMENT_FIELDS = (
+    "protected_paths", "protected_path_reasons", "control_plane_words", "benign_path_patterns",
+    "protected_commands", "message_commands", "data_consumers", "unattended_env", "unattended_allow_env",
+    "unattended_grant_hint", "default_unattended_allow", "audit", "mcp_command_templates",
+)
+_SCALAR_FIELDS = ("unattended_env", "unattended_allow_env", "unattended_grant_hint")
+
 
 class ProfileError(ValueError):
     """A profile manifest that cannot be read as a profile. Never answered with the generic one."""
+
+
+def _bad(name: str) -> Any:
+    raise ProfileError(f"profile fragment field {name} is malformed")
+
+
+def merge_fragments(base: Profile, fragments: Any) -> Profile:
+    """``base`` plus the ``profile:`` fragments of the enabled packs. Raises :class:`ProfileError` on a bad one."""
+    fields: Dict[str, Any] = {}
+    defaults = Profile()
+    for fragment in fragments:
+        if not isinstance(fragment, dict):
+            raise ProfileError("a pack's profile fragment is not a mapping")
+        unknown = sorted(set(fragment) - set(FRAGMENT_FIELDS))
+        if unknown:
+            raise ProfileError(f"a pack's profile fragment has unknown fields: {unknown}")
+        for name, raw in fragment.items():
+            value = _tuple(raw)
+            if name in _SCALAR_FIELDS:
+                if not isinstance(value, str):
+                    raise ProfileError(f"profile fragment field {name} must be a string")
+                if getattr(base, name) == getattr(defaults, name):
+                    fields[name] = value
+            elif name == "audit":
+                if base.audit == defaults.audit:
+                    fields[name] = AuditSpec(**raw) if isinstance(raw, dict) else _bad(name)
+            elif name == "mcp_command_templates":
+                try:
+                    templates = tuple(McpCommandTemplate(*t) for t in value)
+                except TypeError as e:
+                    raise ProfileError(f"profile fragment field {name} is malformed: {e}") from e
+                fields[name] = fields.get(name, base.mcp_command_templates) + templates
+            else:
+                fields[name] = fields.get(name, getattr(base, name)) + tuple(value)
+    try:
+        return base._replace(**fields)
+    except TypeError as e:
+        raise ProfileError(f"a pack's profile fragment is malformed: {e}") from e
 
 
 def dump_profile(profile: Profile) -> str:
@@ -174,4 +234,4 @@ def load_profile(path: Path) -> Profile:
         raise ProfileError(f"profile {path} is malformed: {e}") from e
 
 
-__all__ = ["AuditSpec", "GENERIC", "GroupSpec", "McpCommandTemplate", "Profile", "ProfileError", "dump_profile", "load_profile"]
+__all__ = ["AuditSpec", "FRAGMENT_FIELDS", "GENERIC", "GroupSpec", "McpCommandTemplate", "Profile", "ProfileError", "dump_profile", "load_profile", "merge_fragments"]

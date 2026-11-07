@@ -15,15 +15,17 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 VERDICTS = ("block", "ask", "allow")
 ROW_KEYS = {"id", "class", "command", "cwd", "verdict", "source"}
 # A row names the tool that carries its command (default ``Bash``); the hook kind is the one registered for it.
-OPTIONAL_ROW_KEYS = {"tool"}
+# ``packs`` lists the packs enabled in the throwaway home's policy file; ``env`` is added to the hook's environment.
+OPTIONAL_ROW_KEYS = {"tool", "packs", "env"}
 SHELL_TOOLS = ("Bash", "PowerShell", "Monitor")
 
 
@@ -49,6 +51,11 @@ def validate(data: Dict[str, Any]) -> None:
             raise CorpusError(f"row {row.get('id', row)!r}: keys must be {sorted(ROW_KEYS)} and optionally {sorted(OPTIONAL_ROW_KEYS)}")
         if row.get("tool", "Bash") not in SHELL_TOOLS:
             raise CorpusError(f"row {row['id']!r}: tool must be one of {SHELL_TOOLS}")
+        packs, environment = row.get("packs", []), row.get("env", {})
+        if not isinstance(packs, list) or not all(isinstance(p, str) for p in packs):
+            raise CorpusError(f"row {row['id']!r}: packs must be a list of pack names")
+        if not isinstance(environment, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in environment.items()):
+            raise CorpusError(f"row {row['id']!r}: env must map names to strings")
         if row["id"] in seen:
             raise CorpusError(f"duplicate row id {row['id']!r}")
         seen.add(row["id"])
@@ -66,8 +73,28 @@ def _build_tree(files: Dict[str, str], root: Path) -> None:
         path.chmod(0o755)
 
 
-def _hook(command: str, cwd: str, home: Path, tool: str = "Bash") -> str:
-    environ = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "PWD": cwd}
+def home_for(home: Path, packs: List[str]) -> Path:
+    """``home`` itself, or a sibling throwaway home whose policy file enables ``packs`` (rows run in parallel)."""
+    if not packs:
+        return home
+    variant = home.parent / ("home-" + "-".join(sorted(packs)))
+    policy = variant / ".damage-control" / "damagecontrol.yml"
+    if not policy.exists():
+        policy.parent.mkdir(parents=True, exist_ok=True)
+        staging = policy.with_name(f"{policy.name}.{threading.get_ident()}")
+        staging.write_text("packs:\n" + "".join(f"  - {p}\n" for p in sorted(packs)))
+        os.replace(staging, policy)  # a hook racing this call sees no file or the whole file, never half of it
+    return variant
+
+
+def row_call(row: Dict[str, Any], home: Path, sub: Callable[..., str]) -> Tuple[str, str, Path, str, Dict[str, str]]:
+    """``(command, cwd, home, tool, environment)`` for one row: its packs, environment and tokens filled in."""
+    row_home = home_for(home, row.get("packs", []))
+    return sub(row["command"], row_home), sub(row["cwd"], row_home), row_home, row.get("tool", "Bash"), row.get("env", {})
+
+
+def _hook(command: str, cwd: str, home: Path, tool: str = "Bash", extra: Optional[Dict[str, str]] = None) -> str:
+    environ = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "PWD": cwd, **(extra or {})}
     payload = {"session_id": "00000000-0000-0000-0000-000000000000", "cwd": cwd, "hook_event_name": "PreToolUse",
                "permission_mode": "default", "tool_name": tool, "tool_input": {"command": command}}
     proc = subprocess.run([sys.executable, "-I", "-m", "damage_control.hook", "bash"], input=json.dumps(payload),
@@ -89,8 +116,8 @@ def scratch(files: Dict[str, str]) -> Iterator[Tuple[Path, Callable[[str], str]]
         root.mkdir()
         _build_tree(files, root)
 
-        def sub(text: str) -> str:
-            return text.replace("@HOME@", str(home)).replace("@ROOT@", str(root))
+        def sub(text: str, at: Path = home) -> str:
+            return text.replace("@HOME@", str(at)).replace("@ROOT@", str(root))
 
         yield home, sub
 
@@ -100,7 +127,7 @@ def replay(data: Dict[str, Any], judge: Callable[..., str] = _hook) -> List[Dict
     results = []
     with scratch(data.get("files", {})) as (home, sub):
         for row in data["rows"]:
-            got = judge(sub(row["command"]), sub(row["cwd"]), home, row.get("tool", "Bash"))
+            got = judge(*row_call(row, home, sub))
             results.append({**row, "got": got, "ok": got == row["verdict"]})
     return results
 

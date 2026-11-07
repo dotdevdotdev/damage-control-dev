@@ -18,16 +18,17 @@ SCRIPT = "#!/bin/sh\ngit push --force origin main\n"
 FILES = {"run.sh": SCRIPT, "Makefile": "clean:\n\tgit push --force origin main\n"}
 
 
-def explain(command: str, cwd: str, home: Path, mode: str = "default", as_json: bool = True) -> subprocess.CompletedProcess:
-    environ = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "PWD": cwd}
+def explain(command: str, cwd: str, home: Path, mode: str = "default", as_json: bool = True,
+            extra: Optional[Dict[str, str]] = None) -> subprocess.CompletedProcess:
+    environ = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "PWD": cwd, **(extra or {})}
     argv = [sys.executable, "-I", "-m", "damage_control", "explain", "--cwd", cwd, "--mode", mode]
     if as_json:
         argv.append("--json")
     return subprocess.run(argv + [command], capture_output=True, text=True, env=environ, cwd=str(home), timeout=120)
 
 
-def report(command: str, cwd: str, home: Path, mode: str = "default") -> Dict[str, Any]:
-    proc = explain(command, cwd, home, mode)
+def report(command: str, cwd: str, home: Path, mode: str = "default", extra: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    proc = explain(command, cwd, home, mode, extra=extra)
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 
@@ -36,8 +37,8 @@ def test_explain_gives_the_verdict_the_real_hook_gives_for_every_corpus_row():
     data = corpus.load()
     hook = {r["id"]: r["got"] for r in corpus.replay(data)}
 
-    def judge(command: str, cwd: str, home: Path, tool: str) -> str:
-        return report(command, cwd, home)["verdict"]["decision"]
+    def judge(command: str, cwd: str, home: Path, tool: str, extra: Dict[str, str]) -> str:
+        return report(command, cwd, home, extra=extra)["verdict"]["decision"]
 
     explained = {r["id"]: r["got"] for r in corpus.replay(data, judge=judge)}
     assert explained == hook

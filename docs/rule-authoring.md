@@ -280,13 +280,14 @@ off containers       Docker and Kubernetes
 off infrastructure   Terraform, Pulumi, Serverless, SAM
 off tmux             tmux kill-server / kill-session -a
 off publish          cargo/poetry/twine/pnpm/yarn/gem/mvn publish
+off agentwire        agentwire orchestrator state, secrets, outbound sends and session teardown
 ```
 
 | Kind | On by default | Who can change it |
 |---|---|---|
 | Kernel groups: `control-plane`, `core` | always | nobody |
 | Default groups: `git`, `uv`, `registry`, `payloads`, `remote`, `mcp-tools`, `outbound` | yes | you can opt out: `groups disable <name>` |
-| Packs: `aws`, `gcp`, `firebase`, `cloud-hosting`, `databases`, `containers`, `infrastructure`, `tmux`, `publish` | no | you can opt in: `packs enable <name>` |
+| Packs: `aws`, `gcp`, `firebase`, `cloud-hosting`, `databases`, `containers`, `infrastructure`, `tmux`, `publish`, [`agentwire`](agentwire-pack.md) | no | you can opt in: `packs enable <name>` |
 
 `packs enable|disable` and `groups enable|disable` write the policy file. They are **human-terminal only**: without a TTY on stdin they refuse, so an agent's shell tool cannot change them.
 

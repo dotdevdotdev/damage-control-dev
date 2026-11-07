@@ -1,6 +1,6 @@
 """Rule groups and packs: which bundled rule/tooldef files belong to what (#1141).
 
-Every bundled rules file (generic ``rules/*`` or a host layer such as AgentWire's) and
+Every bundled rules file (generic ``rules/*`` or a host layer) and
 every ``tooldefs/*`` belongs to exactly one entry here (entries name the authored ``.yaml``;
 the JSON a hook reads shares its stem). File names must be unique across the rules dirs.
 ``kind="group"`` entries are default-on ("os-focused"); a human may opt one out. ``kernel`` groups can never be opted out. ``kind="pack"`` entries are vendor/tool
@@ -13,6 +13,8 @@ attached to generic groups, the packs it turns on) comes from the installed prof
 
 from __future__ import annotations
 
+import functools
+import json
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Optional, Tuple
 
@@ -43,6 +45,25 @@ _GENERIC_ENTRIES = (
 )
 
 
+@functools.lru_cache(maxsize=None)
+def _bundled_packs() -> Tuple[Entry, ...]:
+    """Packs declared by their own rules file: a bundled file no generic entry owns, with a top-level ``pack:`` header.
+
+    The header is ``{name, description, binaries}``; the file is the pack's ``rules``. Only files
+    outside the generic registry are read, so a hook pays for at most the packs added this way.
+    """
+    owned = {Path(f).stem for e in _GENERIC_ENTRIES for f in e.rules}
+    found = []
+    for path in sorted(engine.bundled_rules_dir().glob("*.json")):
+        if path.stem in owned:
+            continue
+        header = json.loads(path.read_text()).get("pack")
+        if isinstance(header, dict):
+            found.append(Entry(str(header["name"]), "pack", str(header.get("description", "")), (path.stem + ".yaml",),
+                               binaries=tuple(header.get("binaries", ()))))
+    return tuple(found)
+
+
 def _with_profile(generic: Tuple[Entry, ...], profile) -> Tuple[Entry, ...]:
     """``generic`` plus what ``profile`` adds: layer files on generic groups, then its own groups."""
     layers = dict(profile.group_layer_rules)
@@ -55,7 +76,7 @@ def _with_profile(generic: Tuple[Entry, ...], profile) -> Tuple[Entry, ...]:
 
 def entries() -> Tuple[Entry, ...]:
     """Every group and pack of THIS process: the generic registry plus what its profile adds."""
-    return _with_profile(_GENERIC_ENTRIES, engine.PROFILE)
+    return _with_profile(_GENERIC_ENTRIES + _bundled_packs(), engine.PROFILE)
 
 
 def registry() -> Dict[str, Entry]:

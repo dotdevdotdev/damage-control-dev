@@ -210,12 +210,15 @@ def run_hook(argv: List[str]) -> None:
             decide_config_change(namespace)
             return
         tools, tooldefs = HOOK_KINDS[kind]
+        # Before the payload is read: an enabled pack's profile fragment names the unattended marker
+        # and the MCP command templates the parse below consults.
+        config = namespace.load_effective_config(tooldefs)
         call, ctx = parse_payload(namespace.read_hook_input(), tools, namespace)
         if call is None:
             sys.exit(0)
         if kind == "bash" and not claim_once(call.command):
             sys.exit(0)
-        guard = Guard(namespace.load_effective_config(tooldefs), namespace)
+        guard = Guard(config, namespace)
         render(guard.decide(call, ctx), namespace)
 
     engine.run_hook_guarded(main)

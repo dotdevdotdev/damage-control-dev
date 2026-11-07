@@ -1,6 +1,6 @@
 """The one read-modify-write path for a harness's JSON settings file (#1209 M5, section 5).
 
-Generalizes what #1220 fixed in agentwire. The file belongs to the user and to other tools,
+The file belongs to the user and to other tools,
 never to us, so every edit goes through :func:`edit_json_config`:
 
 * **Unparseable input is a refusal, never a rewrite** (:class:`ConfigError`). Replacing a file

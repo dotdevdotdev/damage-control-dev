@@ -13,21 +13,14 @@
 # A tool call names no directory, so a path-scoped grant refuses — grant these
 # ids unscoped, per task, deliberately.
 #
-# WHAT IS CLASSIFIED: the measured dangerous core — the kill/remove/teardown
-# class whose effect is not "a message to a guarded session". Each mirrors the
-# in-CLI safety its command path already carries (merge-verification, dirty
-# refusal, PR guards); the tier is additive on top, giving the tool call the
-# same unattended fail-closed posture its Bash spelling gets from the rules.
+# WHAT IS CLASSIFIED HERE: only the fallback entry below. Tools of one application
+# (a session manager's kill/remove/teardown class, say) are classified by that
+# application's own pack, which sorts before this file so its entries win.
 #
-# WHAT IS DELIBERATELY NOT CLASSIFIED (pricing both halves — a wrongful tool
-# refusal in an unattended session is a silent loop):
-#   * session_send / session_send_keys / pane_send / msg_send — their effect is
-#     a message to a Claude session that runs its OWN damage control; the Bash
-#     twin (`agentwire send`) is unruled, and gating only the tool would
-#     recreate #923's channel asymmetry in reverse.
-#   * everything read-shaped or additive (create/list/status/output) — allow by
-#     falling through, with zero-access secret screening still applied to every
-#     tool's path arguments.
+# WHAT IS DELIBERATELY NOT CLASSIFIED: a tool whose effect is a message to a
+# session that runs its own damage control, and everything read-shaped or
+# additive (create/list/status/output) — those fall through to allow, with
+# zero-access secret screening still applied to every tool's path arguments.
 #
 # UNCLASSIFIED TOOLS fall through to the final name-shape entry below (the
 # #1036 heuristic, now data a host can edit) and otherwise to allow-with-

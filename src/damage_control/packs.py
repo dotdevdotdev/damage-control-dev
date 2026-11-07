@@ -1,4 +1,4 @@
-"""Pack/group state in the protected ``~/.agentwire/damagecontrol.yml`` (#1141).
+"""Pack/group state in the protected ``~/.damage-control/damagecontrol.yml`` (#1141).
 
 ``packs:`` lists the enabled vendor packs; ``disabled_groups:`` lists opted-out
 default groups. A missing ``packs:`` key means *undecided* (a pre-packs install):

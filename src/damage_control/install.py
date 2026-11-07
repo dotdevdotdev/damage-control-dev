@@ -6,7 +6,7 @@ nothing it could not put back. The settings file is only ever touched through
 ``status`` can tell drift from intent and ``uninstall`` can restore the original bytes.
 
 Ownership: an entry is ours iff the package module name is in its ``args``. An entry carrying
-a ``--profile`` belongs to whoever installed that profile (a host such as agentwire): ``init``
+a ``--profile`` belongs to whoever installed that profile (a host application): ``init``
 refuses to rewrite an entry whose profile differs from the one requested, so two installers
 never fight over the same matcher.
 """

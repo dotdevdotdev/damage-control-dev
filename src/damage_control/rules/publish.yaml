@@ -5,7 +5,7 @@
 # `ask: true` — see outbound.yaml for how `ask` resolves per session mode.
 #
 # Note: `npm publish` and `uv publish` are already `ask`-tier via the write-access
-# tooldef commands (agentwire/tooldefs/{npm,uv}.yaml). These rules cover the
+# tooldef commands (the bundled tooldefs/{npm,uv}.yaml). These rules cover the
 # registries that have no tooldef.
 
 bashToolPatterns:
