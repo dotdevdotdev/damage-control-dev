@@ -507,12 +507,25 @@ def _canonicalize_for(command: str, home: str) -> str:
         # whitespace/quote/=/: boundary and immediately followed by ``/``), so we
         # never touch ``~`` used as a literal (e.g. inside a sed expression).
         out = re.sub(r'(^|[\s=:"\'(<>])~(?=/)', lambda m: m.group(1) + home, out)
-    return _PATH_RUN_RE.sub(lambda m: posixpath.normpath(m.group(0)), out)
+    return _PATH_RUN_RE.sub(_fold_path_run, out)
 
 
 # A run of path characters holding a ``/``: the unit whose ``.`` / ``..`` segments and doubled or
 # trailing slashes are folded away (lexically), so every spelling of a path reaches the matchers as one.
-_PATH_RUN_RE = re.compile(r"[\w.@%+~\-]*(?:/+[\w.@%+~\-]*)+")
+# A run is not always a whole word: a brace group, a glob character, a variable or a quote the shell
+# removes can continue it (``~/dir/{a,b}``, ``~/.""name``, ``~/"$x"``). Its last segment is then only the
+# start of a name, so it is kept as typed and only the segments before it are folded.
+_PATH_RUN_RE = re.compile(
+    r"([\w.@%+~\-]*(?:/+[\w.@%+~\-]*)+)(?=([{*?\[$`]|['\"\\]+[\w.@%+~\-/{*?$`])?)"
+)
+
+
+def _fold_path_run(m: "re.Match[str]") -> str:
+    run = m.group(1)
+    if not m.group(2):
+        return posixpath.normpath(run)
+    head, _, tail = run.rpartition("/")
+    return (posixpath.normpath(head) if head else "") + "/" + tail
 
 
 def path_match_regex(expanded_pattern: str) -> str:
@@ -588,7 +601,8 @@ def _expand_braces(text: str) -> Optional[Tuple[str, ...]]:
             if cur != text:
                 done.append(cur)
             continue
-        for alt in m.group(1).split(","):
+        # pushed last-first, so the groups come out in the order the shell lists them (the last word of a command is its destination)
+        for alt in reversed(m.group(1).split(",")):
             pending.append(cur[:m.start()] + alt + cur[m.end():])
         if len(pending) + len(done) > _BRACE_VARIANT_CAP:
             return None
@@ -1162,6 +1176,8 @@ _DELETE_VERBS = frozenset({"rm", "rmdir", "unlink", "shred"})
 _MOVE_VERBS = frozenset({"mv", "rename"})
 _COPY_VERBS = frozenset({"cp", "install", "rsync"})
 _FEEDERS = frozenset({"xargs", "parallel"})
+# Quotes and backslashes the shell removes: the text without them is the text the verbs are read from.
+_QUOTE_MARKS_RE = re.compile(r"['\"\\]")
 _PRODUCER_SCAN_VERBS_RE = re.compile(r"\b(?:rm|rmdir|unlink|shred|truncate|dd|mv|rename|cp|install|rsync|ln)\b")
 _FEEDER_VALUE_OPTS = frozenset(
     {"-I", "-n", "-P", "-L", "-d", "-E", "-s", "-a", "-J", "-R", "-S", "-j", "-N", "-l", "-i"}
@@ -1436,12 +1452,24 @@ def _producer_head(words: List[str]) -> Optional[Tuple[List[str], List[str], boo
     return None
 
 
+def _brace_expanded_word(word: str) -> List[str]:
+    """The words the shell makes of ``word`` before the command runs: ``{a,b}`` groups expanded.
+
+    A word whose groups outgrow the cap stays as typed (the cap is a declared residual).
+    """
+    variants = brace_variants(word) if "{" in word else None
+    return [canonicalize_command(v) for v in variants or [word]]
+
+
 def producer_scan(command: str) -> _ProducerScan:
     """Find consumers fed from elsewhere (and direct mv/cp operands) in ``command``."""
     scan = _ProducerScan()
-    if not _PRODUCER_SCAN_VERBS_RE.search(command):
+    if not _PRODUCER_SCAN_VERBS_RE.search(_QUOTE_MARKS_RE.sub("", command)):
         return scan
-    segments = _masked_subcommand_words(mask_sed_substitutions(command), keep=lambda _t: True)
+    segments = [
+        [expanded for word in words for expanded in _brace_expanded_word(word)]
+        for words in _masked_subcommand_words(mask_sed_substitutions(command), keep=lambda _t: True)
+    ]
     ops = [_classify_guarded_op(words) for words in segments]
     for words, op in zip(segments, ops):
         if op is None:
@@ -1478,6 +1506,8 @@ def _expand_scan_word(word: str) -> str:
 def _prefix_may_reach(root: str, entry_abs: str) -> bool:
     """True when the directory ``root`` is (or contains) ``entry_abs``."""
     root = root.rstrip("/") or "/"
+    if _casefolds_paths(entry_abs):
+        root, entry_abs = root.lower(), entry_abs.lower()
     if _GLOB_CHARS_RE.search(root):
         parts = entry_abs.strip("/").split("/")
         return any(
@@ -5880,12 +5910,27 @@ _CMD_START = (
 )
 # ``cd dir >/dev/null 2>&1 &&``: redirects between the target and the separator
 _CD_REDIRECTS = r"(?:\s+(?:\d*|&)(?:>>?|<&?|>&|>\|)\s*[^\s;&|()<>]+)*"
+# The verb and the target may carry quotes and backslashes the shell removes (``c""d``, ``cd .""ssh``).
+_QUOTE_MARKS = r"['\"\\]*"
+_CD_VERB = r"(?:" + _QUOTE_MARKS + r"c" + _QUOTE_MARKS + r"d|" + _QUOTE_MARKS + r"p" + _QUOTE_MARKS + r"u" + _QUOTE_MARKS + r"s" + _QUOTE_MARKS + r"h" + _QUOTE_MARKS + r"d)"
 _CD_RE = _rx(
     _CMD_START
-    + r"(?:cd|pushd)\s+(?:--\s+)?(?P<d>\"[^\"]*\"|'[^']*'|[^\s;&|()<>]+)" + _CD_REDIRECTS + r"\s*(?=&&|;|\|\||\n)"
+    + _CD_VERB + r"\s+(?:--\s+)?(?P<d>(?:\"[^\"]*\"|'[^']*'|\\.|[^\s;&|()<>\"'\\])+)" + _CD_REDIRECTS + r"\s*(?=&&|;|\|\||\n)"
 )
 # ``popd`` returns to a directory the command cannot see: an unresolvable cwd.
-_POPD_RE = _rx(_CMD_START + r"popd\b[^\n;&|()]*\s*(?=&&|;|\|\||\n)")
+_POPD_RE = _rx(
+    _CMD_START + _QUOTE_MARKS + r"p" + _QUOTE_MARKS + r"o" + _QUOTE_MARKS + r"p" + _QUOTE_MARKS + r"d\b[^\n;&|()]*\s*(?=&&|;|\|\||\n)"
+)
+_CD_VERBS_RE = _rx(r"\b(?:cd|pushd|popd)\b")
+
+
+def _unquoted_word(word: str) -> str:
+    """``word`` as the shell hands it to the command: quotes and backslashes removed."""
+    try:
+        parts = shlex.split(word)
+    except ValueError:
+        return word.strip("'\"")
+    return "".join(parts) if len(parts) == 1 else word.strip("'\"")
 _REL_WORD = _rx(r"(?<![^\s;&|(<>'\"=])([A-Za-z0-9_.][^\s;&|()'\"<>]*)")
 
 
@@ -6150,7 +6195,7 @@ def _chdir_option_split(words: List[str]) -> Tuple[List[str], List[str]]:
     return dirs, rest
 
 
-def _cwd_scopes(command: str) -> Tuple[List[Tuple[str, str]], List[str]]:
+def _cwd_scopes(command: str, base: Optional[str] = None) -> Tuple[List[Tuple[str, str]], List[str]]:
     """``(known, unknown)`` for every place the command changes directory (#1101).
 
     ``known`` pairs a literal directory with the text that runs in it —
@@ -6158,15 +6203,17 @@ def _cwd_scopes(command: str) -> Tuple[List[Tuple[str, str]], List[str]]:
     ``env -C`` / ``--chdir`` and ``patch -d`` — with ``d=<dir>; cd $d`` resolved
     through the same command's literal assignments. ``unknown`` holds the text
     that runs after a ``cd`` the command cannot resolve (``cd -``, ``popd``,
-    ``cd $x`` with ``x`` set from a substitution or not at all).
+    ``cd $x`` with ``x`` set from a substitution or not at all). ``base`` is the
+    directory the command starts in: a relative first ``cd`` (``cd .ssh``) is resolved
+    against it, and without it that ``cd`` is one the command cannot resolve.
     """
     known: List[Tuple[str, str]] = []
     unknown: List[str] = []
-    if re.search(r"\b(?:cd|pushd|popd)\b", command):
-        events = [(m.start(), m.end(), m.group("d").strip("'\"")) for m in _CD_RE.finditer(command)]
+    if _CD_VERBS_RE.search(_QUOTE_MARKS_RE.sub("", command)):
+        events = [(m.start(), m.end(), _unquoted_word(m.group("d"))) for m in _CD_RE.finditer(command)]
         events += [(m.start(), m.end(), "-") for m in _POPD_RE.finditer(command)]
         events.sort()
-        cwd: Optional[str] = None
+        cwd: Optional[str] = base
         for k, (start, stop, target) in enumerate(events):
             end = events[k + 1][0] if k + 1 < len(events) else len(command)
             rest = command[stop:end]
@@ -6395,10 +6442,11 @@ def _cwd_resolved_variants(command: str, cwd: Optional[str], config: Dict[str, A
     ``> ~/.claude/settings.json``. A missing cwd adds nothing: what a relative
     word means is then unknown, which the unverifiable-target verdict owns.
     """
-    scopes = list(_cwd_scopes(command)[0])
-    if cwd and os.path.isabs(cwd):
+    bases = list(dict.fromkeys((posixpath.normpath(cwd), os.path.realpath(cwd)))) if cwd and os.path.isabs(cwd) else []
+    scopes = [scope for base in bases or [None] for scope in _cwd_scopes(command, base)[0]]
+    if bases:
         lead = _before_first_cd(command)
-        scopes += [(base, lead) for base in dict.fromkeys((posixpath.normpath(cwd), os.path.realpath(cwd)))]
+        scopes += [(base, lead) for base in bases]
     guarded = _guarded_path_test(config)
     out: List[str] = []
     for base, text in scopes:
@@ -6750,7 +6798,7 @@ def _opaque_inline_write(command: str) -> Optional[str]:
 
 
 def unverifiable_target_verdict(
-    command: str, allowed_paths: List[Dict[str, Any]], depth: int = 0
+    command: str, allowed_paths: List[Dict[str, Any]], depth: int = 0, cwd: Optional[str] = None
 ) -> Optional[str]:
     """Why ``command`` needs a human, when what it writes to is unknowable and the control plane is in play.
 
@@ -6766,7 +6814,7 @@ def unverifiable_target_verdict(
     """
     if depth < _RESCAN_DEPTH:
         for inner in _wrapper_payload_commands(command) + _hidden_commands(command):
-            reason = unverifiable_target_verdict(inner, allowed_paths, depth + 1)
+            reason = unverifiable_target_verdict(inner, allowed_paths, depth + 1, cwd)
             if reason:
                 return reason
     if "{" in command and mentions_control_plane(command) and brace_variants(canonicalize_command(command)) is None:
@@ -6774,11 +6822,11 @@ def unverifiable_target_verdict(
     opaque = _opaque_inline_write(command)
     if opaque:
         return opaque
-    known, unknown = _cwd_scopes(command)
-    for cwd, rest in known:
-        if cwd in _protected_dirs() or cwd == os.path.expanduser("~"):
+    known, unknown = _cwd_scopes(command, cwd if cwd and os.path.isabs(cwd) else None)
+    for scope, rest in known:
+        if scope in _protected_dirs() or scope == os.path.expanduser("~"):
             if _applies_diff(rest):
-                return f"`patch` / `git apply` in {cwd} — the files it rewrites are named only in the diff"
+                return f"`patch` / `git apply` in {scope} — the files it rewrites are named only in the diff"
     for rest in unknown:
         for d, names in _named_control_plane_files():
             new = _absolutize(rest, d)
@@ -10758,7 +10806,7 @@ def _decide_rules(
     # A directory the scanner cannot see: same tier (exempt from ``# ask:``
     # and the kill switch), but an ASK — the command may be harmless, and
     # `unverifiable` keeps bypass from demoting it.
-    target_reason = unverifiable_target_verdict(command, control_plane_allowlist(allowed))
+    target_reason = unverifiable_target_verdict(command, control_plane_allowlist(allowed), cwd=cwd)
     if target_reason:
         return {
             "decision": "ask",
