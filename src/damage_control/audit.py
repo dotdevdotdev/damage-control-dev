@@ -21,9 +21,11 @@ Fields:
 - pattern_matched: Regex pattern that matched
 """
 
+import hashlib
 import json
 import os
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -81,6 +83,39 @@ def get_log_dir() -> Path:
     log_dir = _config_home() / _AUDIT_LOG_DIR
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
+
+
+# Claims older than this are removed; a call is judged within seconds of being made.
+_CLAIM_TTL_SECONDS = 3600
+
+
+def claim_judgment(tool_use_id: str, session_id: str, command: str) -> bool:
+    """True for the one hook process that judges this tool call; False for a duplicate of it.
+
+    Claude Code 2.1.314 and later also runs a ``Bash`` hook on the command a ``Monitor`` call
+    starts, so a host that registers both matchers sees the same call twice, concurrently. The
+    first process to create the claim file (``O_EXCL``, atomic) judges and audits; the other
+    exits without judging. The key holds the command too: the same ``tool_use_id`` with different
+    text is a different question and is judged. Any failure to claim (no directory, a full disk)
+    answers True: a duplicate judgment is cheap, a skipped one is not.
+    """
+    key = hashlib.sha256("\0".join((session_id, tool_use_id, command)).encode("utf-8", "replace")).hexdigest()
+    try:
+        claims = get_log_dir() / ".judged"
+        claims.mkdir(exist_ok=True)
+        now = time.time()
+        for old in claims.iterdir():
+            try:
+                if now - old.stat().st_mtime > _CLAIM_TTL_SECONDS:
+                    old.unlink()
+            except OSError:
+                pass
+        os.close(os.open(claims / key, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+    except FileExistsError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 def get_log_file() -> Path:

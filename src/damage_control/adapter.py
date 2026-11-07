@@ -185,6 +185,15 @@ def decide_config_change(namespace: Any) -> None:
                               install.registration_problems), namespace)
 
 
+def claim_once(command: str) -> bool:
+    """False when another hook process already took this tool call (a ``Monitor`` call also routed through ``Bash``)."""
+    tool_use_id = audit.HOOK_INPUT.get("tool_use_id")
+    if not isinstance(tool_use_id, str) or not tool_use_id:
+        return True
+    session_id = audit.HOOK_INPUT.get("session_id")
+    return audit.claim_judgment(tool_use_id, session_id if isinstance(session_id, str) else "", command)
+
+
 def run_hook(argv: List[str]) -> None:
     """The hook entry: parse the arguments, install the profile, judge one payload, exit.
 
@@ -201,10 +210,12 @@ def run_hook(argv: List[str]) -> None:
             decide_config_change(namespace)
             return
         tools, tooldefs = HOOK_KINDS[kind]
-        guard = Guard(namespace.load_effective_config(tooldefs), namespace)
         call, ctx = parse_payload(namespace.read_hook_input(), tools, namespace)
         if call is None:
             sys.exit(0)
+        if kind == "bash" and not claim_once(call.command):
+            sys.exit(0)
+        guard = Guard(namespace.load_effective_config(tooldefs), namespace)
         render(guard.decide(call, ctx), namespace)
 
     engine.run_hook_guarded(main)

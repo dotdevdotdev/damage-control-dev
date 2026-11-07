@@ -28,20 +28,21 @@ one, which bypass never demotes.
 
 Every built-in tool name Claude Code is known to have, with whether it can do harm the judged tools cannot,
 and the decision. A tool listed *out of scope* has no hook registered, so nothing is judged for it.
-The names were observed in Claude Code 2.1.319 from its binary and the hook-input schema it validates, not from
-a live session. A test holds this table to the registered matchers; a tool Claude Code adds later is
+The names were read in Claude Code 2.1.319 from its binary and the hook-input schema it validates; the payload
+shapes of `Agent`, `Bash`, `Glob` and `Monitor` were also observed in a live session
+([hooks research](hooks-research.md#appendix-a-observed-payloads)). A test holds this table to the registered matchers; a tool Claude Code adds later is
 missing until someone reviews it and adds a row to `src/damage_control/toolcoverage.py`.
 
 | Tool | Can it do harm | Decision | Reason |
 |---|---|---|---|
 | `Bash`, `PowerShell` | runs any command | judged | the rules judge the command line |
-| `Monitor` | runs a command in the background and streams its output | judged | the `command` field is a shell command, judged by the same rules as Bash. A `url` monitor (a WebSocket opened by Claude Code) has no command and is not judged |
+| `Monitor` | runs a command in the background and streams its output | judged | the `command` field is a shell command, judged by the same rules as Bash. A `url` monitor (a WebSocket opened by Claude Code) has no command and is not judged. From Claude Code 2.1.314 a `Bash` hook also runs for a Monitor call; the two hook processes share one `tool_use_id`, and only the first to claim it judges and writes the audit row |
 | `Edit`, `NotebookEdit`, `Write` | changes any file the user can | judged | the target path is judged, and script-looking text is asked about |
 | `Read`, `Grep`, `Glob` | reads file contents or lists names | judged | the path is judged |
 | `LSP` | returns symbols, documentation and call sites of the file named in `filePath` | judged | reads a file by path like Read does, so the same path ladder applies |
 | `mcp__.*` | whatever the server offers | judged | the tool name and its path-valued arguments are judged; a host profile can map a tool to the command it runs |
 | `WebFetch`, `WebSearch` | sends text out in the URL or the query, and brings page text back | out of scope | the engine has no egress policy, for Bash `curl` either, and a URL or query that carries data is indistinguishable from one that does not. Claude Code refuses private and local hosts for WebFetch itself, and its permission rules limit domains. Returned text is untrusted input, not an action |
-| `Agent (alias Task)`, `Workflow` | starts a subagent with a prompt of the model's choosing | out of scope | the child's own tool calls reach the hooks: the hook input carries `agent_id` for a call made inside a subagent (from the hook-input schema in the binary; not observed in a live session). The prompt is text, not an action |
+| `Agent`, `Workflow` | starts a subagent with a prompt of the model's choosing | out of scope | the child's own tool calls reach the hooks: the hook input carries `agent_id` and `agent_type` for a call made inside a subagent (observed live, see the [hooks research](hooks-research.md)). The tool name in the payload is `Agent` (older versions called it `Task`). The prompt is text, not an action |
 | `Skill` | loads the instructions of a named skill into the conversation | out of scope | it runs nothing itself; what the instructions then do goes through the judged tools, and the skill directories are part of the protected control plane |
 | `SendMessage`, `SubagentHandback`, `SendUserMessage (alias Brief)`, `SendUserFile`, `PushNotification` | tells the user or another agent something, or attaches a file for the user | out of scope | the recipient is the user or an agent in the same session; nothing leaves for a third party |
 | `AskUserQuestion`, `EnterPlanMode`, `ExitPlanMode` | nothing: they ask the user or switch the permission mode toward more questions | out of scope | the user decides, and nothing is read or written |
