@@ -11,8 +11,10 @@ ordinary terminal (not through Claude Code):
     python3 damage-control-breakglass status     [--settings PATH]
     python3 damage-control-breakglass unregister [--settings PATH]
 
-``unregister`` removes exactly the damage-control entries (the file is backed up first,
-written atomically, and an unparseable file is refused, never rewritten). With them gone
+``unregister`` removes exactly the damage-control entries, under every hook event (an entry is ours
+when it runs ``-m damage_control.hook``, wherever it sits; no list of event names is kept here, so
+an event added later is covered). The file is backed up first,
+written atomically, and an unparseable file is refused, never rewritten. With them gone
 Claude Code stops calling the hooks, so **damage control is OFF** until you repair the
 install and run ``damage-control-dev init``.
 
@@ -53,15 +55,31 @@ def load(path: Path):
 
 
 def owned(settings) -> list:
+    """``(event, matcher, hook)`` for every hook of ours under any event."""
     hooks = settings.get("hooks")
-    pre = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
     found = []
-    for entry in pre if isinstance(pre, list) else []:
-        inner = entry.get("hooks") if isinstance(entry, dict) else None
-        for hook in inner if isinstance(inner, list) else []:
-            if is_ours(hook):
-                found.append((entry.get("matcher"), hook))
+    for event, entries in (hooks.items() if isinstance(hooks, dict) else []):
+        for entry in entries if isinstance(entries, list) else []:
+            inner = entry.get("hooks") if isinstance(entry, dict) else None
+            for hook in inner if isinstance(inner, list) else []:
+                if is_ours(hook):
+                    found.append((event, entry.get("matcher"), hook))
     return found
+
+
+def strip(entries: list) -> list:
+    """``entries`` without our hooks; an entry left with none is dropped, every other entry is untouched."""
+    kept = []
+    for entry in entries:
+        inner = entry.get("hooks") if isinstance(entry, dict) else None
+        if isinstance(inner, list):
+            remaining = [h for h in inner if not is_ours(h)]
+            if len(remaining) != len(inner):
+                if not remaining:
+                    continue
+                entry = dict(entry, hooks=remaining)
+        kept.append(entry)
+    return kept
 
 
 def runs(interpreter: str) -> bool:
@@ -84,7 +102,7 @@ def cmd_status(path: Path) -> int:
         return 0
     print(f"{len(entries)} damage-control hook entries in {path}")
     code = 0
-    for interpreter in sorted({h.get("command", "") for _, h in entries}):
+    for interpreter in sorted({h.get("command", "") for _, _, h in entries}):
         ok = runs(interpreter)
         print(f"  interpreter {interpreter}: {'ok' if ok else 'DEAD — every tool call is being blocked'}")
         code |= 0 if ok else 1
@@ -98,22 +116,17 @@ def cmd_unregister(path: Path) -> int:
         raw, settings = load(path)
     except (ValueError, OSError) as e:
         print(f"REFUSED: {path} cannot be read as JSON ({e}). Edit it by hand: delete the "
-              f"PreToolUse entries whose command runs `-m {HOOK_MODULE}`.")
+              f"hook entries, under any event, whose command runs `-m {HOOK_MODULE}`.")
         return 1
     if not owned(settings):
         print("Nothing to remove.")
         return 0
-    kept = []
-    for entry in settings["hooks"]["PreToolUse"]:
-        inner = entry.get("hooks") if isinstance(entry, dict) else None
-        if isinstance(inner, list):
-            remaining = [h for h in inner if not is_ours(h)]
-            if len(remaining) != len(inner):
-                if not remaining:
-                    continue
-                entry = dict(entry, hooks=remaining)
-        kept.append(entry)
-    settings["hooks"]["PreToolUse"] = kept
+    for event in {event for event, _, _ in owned(settings)}:
+        settings["hooks"][event] = strip(settings["hooks"][event])
+        if not settings["hooks"][event]:
+            del settings["hooks"][event]
+    if not settings["hooks"]:
+        del settings["hooks"]
     backup = path.with_name(path.name + BACKUP_SUFFIX)
     if raw is not None and not backup.exists():
         shutil.copy2(path, backup)
