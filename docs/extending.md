@@ -150,7 +150,7 @@ The timeout side (what happens when a hook is too slow) is in the [threat model]
 
 ```
 $ python3 ~/.damage-control/bin/damage-control-breakglass status
-9 damage-control hook entries in ~/.claude/settings.json
+12 damage-control hook entries in ~/.claude/settings.json
   interpreter /path/to/venv/bin/python: ok
 $ python3 ~/.damage-control/bin/damage-control-breakglass unregister
 Removed the damage-control hooks from ~/.claude/settings.json (backup: …)
@@ -158,7 +158,7 @@ DAMAGE CONTROL IS NOW OFF. Repair the install, then re-register:
   damage-control-dev init
 ```
 
-`unregister` removes exactly our entries, backs the file up first (`settings.json.breakglass.bak`), writes atomically, and refuses a settings file that does not parse. It leaves damage control off until you reinstall and run `init` again.
+`unregister` removes exactly our entries under every hook event (`PreToolUse` and `ConfigChange` today): an entry is ours when it runs `-m damage_control.hook`, wherever it sits, so the script keeps no list of event names and cannot fall behind the registration table. It is a single stdlib-only file that cannot import the engine, which is why it recognizes our entries by that module name instead of reading the table. It backs the file up first (`settings.json.breakglass.bak`), writes atomically, and refuses a settings file that does not parse. It leaves damage control off until you reinstall and run `init` again.
 
 ## Installer
 

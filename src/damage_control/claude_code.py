@@ -3,7 +3,7 @@
 A registration is the exec form Claude Code runs without a shell:
 ``{"command": <absolute interpreter>, "args": ["-I", "-m", "damage_control.hook", kind, ...],
 "timeout": N, "onFailure": "block"}``. Our entries are recognized by the package module name
-in ``args`` and by nothing else.
+in ``args`` and by nothing else, under any event: no list of event names decides what is ours.
 
 Standard library only.
 """
@@ -122,6 +122,12 @@ class Owned(NamedTuple):
     hook: Dict[str, Any]
 
 
+def hook_events(settings: Dict[str, Any]) -> List[str]:
+    """Every event in ``settings`` that holds a list of entries, whether or not we register under it."""
+    hooks = settings.get("hooks")
+    return [event for event, entries in hooks.items() if isinstance(entries, list)] if isinstance(hooks, dict) else []
+
+
 def event_entries(settings: Dict[str, Any], event: str) -> Optional[List[Any]]:
     hooks = settings.get("hooks")
     entries = hooks.get(event) if isinstance(hooks, dict) else None
@@ -129,9 +135,9 @@ def event_entries(settings: Dict[str, Any], event: str) -> Optional[List[Any]]:
 
 
 def owned_entries(settings: Dict[str, Any]) -> List[Owned]:
-    """Every hook of ours in ``settings``, with its event and matcher. Malformed entries are skipped."""
+    """Every hook of ours in ``settings`` under any event, with its event and matcher. Malformed entries are skipped."""
     found: List[Owned] = []
-    for event in EVENTS:
+    for event in hook_events(settings):
         for entry in event_entries(settings, event) or []:
             inner = entry.get("hooks") if isinstance(entry, dict) else None
             if isinstance(inner, list):

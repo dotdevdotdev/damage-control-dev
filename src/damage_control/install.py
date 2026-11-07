@@ -190,6 +190,22 @@ def _event_list(hooks: Dict[str, Any], event: str, created: List[str]) -> List[A
     return entries
 
 
+def _remove_ours(entries: List[Any]) -> bool:
+    """Drop every hook of ours from ``entries`` (and entries left empty by that). True if anything went."""
+    removed = False
+    for entry in list(entries):
+        inner = entry.get("hooks") if isinstance(entry, dict) else None
+        if not isinstance(inner, list) or not any(cc.is_ours(h) for h in inner):
+            continue
+        removed = True
+        remaining = [h for h in inner if not cc.is_ours(h)]
+        if remaining:
+            entry["hooks"] = remaining
+        else:
+            entries.remove(entry)
+    return removed
+
+
 def register(settings: Dict[str, Any], desired: Dict[str, Dict[str, Dict[str, Any]]], created: List[str]) -> bool:
     """Make ``settings`` carry exactly ``desired`` (event -> matcher -> hook) as OUR entries. True if it changed.
 
@@ -205,6 +221,10 @@ def register(settings: Dict[str, Any], desired: Dict[str, Dict[str, Dict[str, An
         created.append("hooks")
     elif not isinstance(hooks, dict):
         raise hc.ConfigError("settings has a malformed `hooks` (not an object); damage control not registered")
+
+    for event in cc.hook_events(settings):
+        if event not in desired:
+            changed |= _remove_ours(hooks[event])
 
     for event, matchers in desired.items():
         entries = _event_list(hooks, event, created)
@@ -249,19 +269,9 @@ def unregister(settings: Dict[str, Any], created: List[str]) -> bool:
     """Remove exactly our entries; prune containers we created and nothing else. True if it changed."""
     if not cc.owned_entries(settings):
         return False
-    for event in cc.EVENTS:
-        entries = cc.event_entries(settings, event)
-        if entries is None:
-            continue
-        for entry in list(entries):
-            inner = entry.get("hooks") if isinstance(entry, dict) else None
-            if not isinstance(inner, list) or not any(cc.is_ours(h) for h in inner):
-                continue
-            remaining = [h for h in inner if not cc.is_ours(h)]
-            if remaining:
-                entry["hooks"] = remaining
-            else:
-                entries.remove(entry)
+    for event in cc.hook_events(settings):
+        entries = settings["hooks"][event]
+        _remove_ours(entries)
         if not entries and f"hooks.{event}" in created:
             del settings["hooks"][event]
     if not settings["hooks"] and "hooks" in created:
@@ -504,7 +514,7 @@ def _drift(owned: List[cc.Owned], interpreter: str, profile: Optional[str], fail
         findings.append(Finding("bad", "missing", "missing entry for matcher(s): " + ", ".join(missing)))
     for o in owned:
         if id(o.hook) not in claimed:
-            expected = [m for m, k in cc.EVENTS[o.event].items() if k == cc.kind_of(o.hook)]
+            expected = [m for m, k in cc.EVENTS.get(o.event, {}).items() if k == cc.kind_of(o.hook)]
             findings.append(Finding("bad", "matcher", f"wrong matcher: {o.matcher!r} under {o.event} runs the {cc.kind_of(o.hook)!r} hook "
                                     f"(expected {expected or 'none'})"))
     return findings
