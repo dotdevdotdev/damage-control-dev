@@ -47,10 +47,17 @@ CONFIG_KIND = "config"
 CONFIG_SOURCES = ("user_settings", "project_settings", "local_settings", "policy_settings")
 CONFIG_MATCHERS: Dict[str, str] = {"|".join(CONFIG_SOURCES): CONFIG_KIND}
 
+# The hand-back hook: a subagent's report that ends in ``NEEDS APPROVAL:`` is turned into an instruction
+# to the parent session to ask the user (``handback``). It runs on every prompt, so it fails open: it never
+# carries ``onFailure: block``, and an exit 2 from it would erase the user's prompt.
+PROMPT_EVENT = "UserPromptSubmit"
+APPROVAL_KIND = "approval"
+PROMPT_MATCHERS: Dict[str, str] = {"*": APPROVAL_KIND}
+
 PRE_TOOL_USE = "PreToolUse"
 
 # event -> matcher -> hook kind: every registration of ours.
-EVENTS: Dict[str, Dict[str, str]] = {PRE_TOOL_USE: MATCHERS, CONFIG_EVENT: CONFIG_MATCHERS}
+EVENTS: Dict[str, Dict[str, str]] = {PRE_TOOL_USE: MATCHERS, CONFIG_EVENT: CONFIG_MATCHERS, PROMPT_EVENT: PROMPT_MATCHERS}
 
 SCOPES = ("user", "project", "managed")
 
@@ -159,7 +166,7 @@ def wanted_hook(interpreter: str, kind: str, timeout: int, fail_closed: bool,
                 profile: Optional[str] = None) -> Dict[str, Any]:
     hook: Dict[str, Any] = {"type": "command", "command": interpreter,
                             "args": hook_args(kind, profile), "timeout": timeout}
-    if fail_closed:
+    if fail_closed and kind != APPROVAL_KIND:
         hook["onFailure"] = "block"
     return hook
 
