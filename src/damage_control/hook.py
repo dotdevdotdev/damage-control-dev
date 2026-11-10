@@ -19,8 +19,19 @@ import os
 import sys
 
 
+# The hand-back hook runs on every prompt Claude Code submits, and an exit 2 there erases the user's
+# prompt, so it is the one kind that fails open and never loads the engine.
+APPROVAL_KIND = "approval"
+
+
+def _is_approval(argv) -> bool:
+    return list(argv[:1]) == [APPROVAL_KIND]
+
+
 def _block(reason: str) -> None:
-    """Exit 2 whatever state stderr is in."""
+    """Exit 2 whatever state stderr is in (0 for the hand-back hook, which must never stop a prompt)."""
+    if _is_approval(sys.argv[1:]):
+        os._exit(0)
     try:
         sys.stderr.write(f"SECURITY: Blocked: damage-control hook could not start ({reason}) — failing closed\n")
         sys.stderr.flush()
@@ -42,6 +53,12 @@ sys.excepthook = _excepthook
 
 
 def main(argv) -> None:
+    if _is_approval(argv):
+        from damage_control import handback
+
+        sys.stdout.write(handback.run(sys.stdin.read(1_000_000)))
+        sys.stdout.flush()
+        return
     try:
         from damage_control.adapter import run_hook
     except BaseException as e:  # SystemExit and KeyboardInterrupt included: nothing may exit 0 or 1 here

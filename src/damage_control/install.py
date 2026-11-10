@@ -145,6 +145,7 @@ def selftest(interpreter: str, profile: Optional[str] = None) -> List[str]:
     """
     probes = [(kind, {"tool_name": "DamageControlSelftest", "tool_input": {}}, 0)
               for kind in dict.fromkeys(cc.MATCHERS.values())]
+    probes += [(cc.APPROVAL_KIND, {"hook_event_name": cc.PROMPT_EVENT, "prompt": "hello"}, 0)]
     probes += [("bash", {"tool_name": tool, "tool_input": {"command": SELFTEST_PROBE}}, 2)
                for tool in ("Bash", "PowerShell")]
     failures = []
@@ -493,7 +494,7 @@ def _drift(owned: List[cc.Owned], interpreter: str, profile: Optional[str], fail
     missing = []
     for event, matchers in cc.EVENTS.items():
         for matcher, kind in matchers.items():
-            label = matcher if event == cc.PRE_TOOL_USE else f"{event} guard"
+            label = matcher if event == cc.PRE_TOOL_USE else f"{event} {'hand-back' if kind == cc.APPROVAL_KIND else 'guard'}"
             hooks = [o.hook for o in owned if o.event == event and o.matcher == matcher and cc.kind_of(o.hook) == kind]
             if not hooks:
                 missing.append(label)
@@ -508,7 +509,7 @@ def _drift(owned: List[cc.Owned], interpreter: str, profile: Optional[str], fail
                 findings.append(Finding("bad", "args", f"{label}: args are {hook.get('args')!r}, expected {cc.hook_args(kind, profile)!r}"))
             if hook.get("timeout") != engine.HOOK_TIMEOUT_SECONDS:
                 findings.append(Finding("bad", "timeout", f"{label}: timeout is {hook.get('timeout')!r}, expected {engine.HOOK_TIMEOUT_SECONDS} (lost)"))
-            if fail_closed and hook.get("onFailure") != "block":
+            if fail_closed and kind != cc.APPROVAL_KIND and hook.get("onFailure") != "block":
                 findings.append(Finding("bad", "onFailure", f"{label}: onFailure is {hook.get('onFailure')!r}, expected 'block' (lost)"))
     if missing:
         findings.append(Finding("bad", "missing", "missing entry for matcher(s): " + ", ".join(missing)))
@@ -564,7 +565,7 @@ def inspect(scope: str = "user", settings: Optional[str] = None, deep: bool = Fa
     fail_closed = (hrec.get("fail_mode", "closed") == "closed") if hrec else True
     if not hrec:
         findings.append(Finding("info", "no-record", "no install record for this scope (registered by a host installer?)"))
-        fail_closed = all(o.hook.get("onFailure") == "block" for o in owned)
+        fail_closed = all(o.hook.get("onFailure") == "block" for o in owned if cc.kind_of(o.hook) != cc.APPROVAL_KIND)
 
     drift = _drift(owned, interpreter, profile, fail_closed)
     findings += drift or [Finding("ok", "registration", f"{registration_count()} matchers registered correctly in {path}")]

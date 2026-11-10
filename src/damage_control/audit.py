@@ -12,7 +12,10 @@ Fields:
 - timestamp: ISO 8601 timestamp
 - session_id: host session name (profile env override → tmux pane → host session records)
 - conversation_id: Claude conversation UUID (from the hook stdin payload)
-- agent_id: Agent identifier (if in parallel execution)
+- agent_id: the subagent's id from the hook stdin payload (present only on a call made inside
+  a subagent); else the profile's ``agent_env`` variable; else ``"main"``
+- agent_type: the subagent's type from the hook stdin payload (e.g. ``Explore``), or null for a
+  call made by the main agent
 - tool: Tool name (Bash, Edit, Write)
 - command: Command/path that was checked
 - decision: "blocked", "asked", "allowed"
@@ -141,6 +144,14 @@ def _hook_field(name: str) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
+def _agent_id() -> str:
+    """Who made the call: the payload's ``agent_id`` (set only inside a subagent), else the
+    profile's env variable, else ``"main"``. Subagents share the parent's process env, so the
+    payload is the only thing that tells them apart.
+    """
+    return _hook_field("agent_id") or (os.environ.get(_AGENT_ENV) if _AGENT_ENV else None) or "main"
+
+
 def _tmux_session_name() -> Optional[str]:
     """The tmux session this hook process runs inside, or None.
 
@@ -222,7 +233,8 @@ def get_session_context() -> dict:
     return {
         "session_id": session or "unknown",
         "conversation_id": conversation_id,
-        "agent_id": os.environ.get(_AGENT_ENV, "main") if _AGENT_ENV else "main",
+        "agent_id": _agent_id(),
+        "agent_type": _hook_field("agent_type"),
     }
 
 
@@ -263,6 +275,7 @@ def log_entry(
         "session_id": context["session_id"],
         "conversation_id": context["conversation_id"],
         "agent_id": context["agent_id"],
+        "agent_type": context["agent_type"],
         "tool": tool,
         "command": command,
         "decision": decision,

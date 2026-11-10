@@ -10,12 +10,12 @@ from typing import Any, Dict, Optional
 
 def run_hook(kind: str, tool: str, tool_input: Dict[str, Any], cwd: str, home: Path,
              mode: str = "default", env: Optional[Dict[str, str]] = None,
-             tool_use_id: Optional[str] = None) -> str:
+             tool_use_id: Optional[str] = None, payload_extra: Optional[Dict[str, Any]] = None) -> str:
     """``block`` (exit 2), ``ask`` / ``allow`` (exit 0), or ``crash-<code>: <stderr tail>``."""
     environ = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "PWD": cwd, **(env or {})}
     payload = {"session_id": "00000000-0000-0000-0000-000000000000", "cwd": cwd, "hook_event_name": "PreToolUse",
                "permission_mode": mode, "tool_name": tool, "tool_input": tool_input,
-               **({"tool_use_id": tool_use_id} if tool_use_id else {})}
+               **({"tool_use_id": tool_use_id} if tool_use_id else {}), **(payload_extra or {})}
     proc = subprocess.run(
         [sys.executable, "-I", "-m", "damage_control.hook", kind],
         input=json.dumps(payload), capture_output=True, text=True, env=environ, cwd=str(home), timeout=120,

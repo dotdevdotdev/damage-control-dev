@@ -30,7 +30,7 @@ A profile only ever **adds**. The generic control plane (project `.damagecontrol
 | `default_unattended_allow` | Rule ids granted to unattended runs by default. The engine ships none. |
 | `unattended_grant_hint` | First half of the sentence telling a blocked unattended run how to get a grant (`{rule_id}` is filled in). |
 | `unattended_block_notifier` | An argv run detached when an unattended action is blocked; the event arrives as JSON on its stdin: `{"event": "unattended_block", "reason", "rule_id", "command"}`. |
-| `audit` | An `AuditSpec`: `log_dir`, `session_env`, `agent_env`, `sessions_dir`. |
+| `audit` | An `AuditSpec`: `log_dir`, `session_env`, `agent_env` (fallback for the `agent_id` of an audit row when the hook payload has none), `sessions_dir`. |
 | `extra_rules_dirs` | Absolute directories of rule files (JSON, or YAML a human wrote), merged after the bundled rules. |
 | `mcp_command_templates` | How an outbound MCP tool maps to the shell command it runs, so the same rule that matches the shell form matches the tool call. |
 | `groups`, `group_layer_rules`, `default_packs` | The host's own groups and packs, rule files attached to generic groups, and the packs that are on when the policy has no `packs:` key. |

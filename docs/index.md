@@ -11,6 +11,7 @@ Start with the [README](../README.md) for install and the commands you will use 
 | [Conformance](conformance.md) | The replayable corpus of respelled commands, with the verdict each gets. Generated from the corpus; `damage-control-dev corpus run` replays it. |
 | [Sandbox pairing](sandbox.md) | How the hook and Claude Code's sandbox cover each other's gaps; a recommended settings snippet; what `doctor` reports. |
 | [Rule authoring](rule-authoring.md) | Writing rules, tooldefs and path lists; the policy file; groups and packs; the path allowlist. |
+| [Subagents and approvals](subagent-approvals.md) | Why a subagent's `ask` is blocked, how the request reaches the parent session and the user, and what the hand-back hook does and does not do. |
 | [Settings-change guard](config-change.md) | The `ConfigChange` hook: what Claude Code sends, which edits fire it, what is blocked and what is only audited, and how `status` reports it. |
 | [Hooks research](hooks-research.md) | Every Claude Code hook event, handler type and registration surface, what was observed live, which to use, and the proposed next batch of issues. |
 | [The `agentwire` pack](agentwire-pack.md) | An optional pack for the agentwire orchestrator: what it protects, how to turn it on, the unattended names it declares. |

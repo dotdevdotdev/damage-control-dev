@@ -31,11 +31,11 @@ def test_config_guard_is_one_entry_for_the_four_settings_sources():
     assert "skills" not in cc.CONFIG_SOURCES
 
 
-def test_register_is_idempotent_and_writes_both_events():
+def test_register_is_idempotent_and_writes_every_event():
     settings, created = {}, []
     assert install.register(settings, desired(), created) is True
-    assert set(settings["hooks"]) == {cc.PRE_TOOL_USE, cc.CONFIG_EVENT}
-    assert created == ["hooks", "hooks.PreToolUse", "hooks.ConfigChange"]
+    assert set(settings["hooks"]) == {cc.PRE_TOOL_USE, cc.CONFIG_EVENT, cc.PROMPT_EVENT}
+    assert created == ["hooks", "hooks.PreToolUse", "hooks.ConfigChange", "hooks.UserPromptSubmit"]
     snapshot = copy.deepcopy(settings)
     assert install.register(settings, desired(), []) is False
     assert settings == snapshot
@@ -89,7 +89,7 @@ def test_init_status_uninstall_round_trip(tmp_path):
     assert first.returncode == 0, first.stderr
     assert f"{install.registration_count()} matchers" in first.stdout
     after_first = path.read_text()
-    assert set(json.loads(after_first)["hooks"]) == {cc.PRE_TOOL_USE, cc.CONFIG_EVENT}
+    assert set(json.loads(after_first)["hooks"]) == {cc.PRE_TOOL_USE, cc.CONFIG_EVENT, cc.PROMPT_EVENT}
     assert "already registered" in cli(home, "init", *args, "--allow-dev-source", "--fail-open").stdout
     assert path.read_text() == after_first
     status = cli(home, "status", *args)

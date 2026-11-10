@@ -66,6 +66,7 @@ class ToolCall(NamedTuple):
 class Context(NamedTuple):
     mode: str = DEFAULT  # "bypass" = the human opted out of ask-escalation friction
     unattended: bool = False  # no human present (scheduler dispatch)
+    subagent: bool = False  # the call comes from inside a subagent, which has no way to put a question to the user
 
 
 class Verdict(NamedTuple):
@@ -129,6 +130,34 @@ class Guard:
         self.e = engine
 
     def decide(self, call: ToolCall, ctx: Context) -> Verdict:
+        verdict = self._decide(call, ctx)
+        if verdict.decision == ASK and ctx.subagent:
+            return self._subagent_ask(call, verdict)
+        return verdict
+
+    def _subagent_ask(self, call: ToolCall, asked: Verdict) -> Verdict:
+        """A subagent cannot answer an ask, and Claude Code shows no prompt for a background one.
+
+        The question is turned into a block that tells the agent to stop and hand the exact command
+        back in its report; the parent session, which the user is watching, asks. The agent gets
+        its answer at once instead of stalling on a prompt nobody sees.
+        """
+        subject = call.command or ", ".join(call.paths) or call.tool_name
+        shown = subject if len(subject) <= 500 else subject[:500] + "..."
+        return Verdict(
+            BLOCK, asked.reason, asked.rule_id,
+            audit=_audit("blocked", call.tool_name, subject, f"subagent cannot ask: {asked.reason}", rule_id=asked.rule_id),
+            stderr=(
+                f"SECURITY: Blocked — this needs the user's approval and a subagent cannot ask: {asked.reason}",
+                f"{call.tool_name}: {shown}",
+                f"Directory: {call.cwd or 'unknown'}",
+                "Do not retry it and do not work around it. Finish what you can without it, then end your final "
+                "report with a line starting `NEEDS APPROVAL:` giving the exact command, its directory and why it "
+                "is needed, so the parent session can ask the user.",
+            ),
+        )
+
+    def _decide(self, call: ToolCall, ctx: Context) -> Verdict:
         if call.kind in _PATH_VERB:
             return self._decide_path(call, ctx)
         if call.kind == "shell":
