@@ -74,13 +74,6 @@ def test_an_ask_from_the_main_agent_has_no_label(home):
     assert not reason.startswith("[")
 
 
-@pytest.mark.parametrize("mode", ["default", "bypassPermissions"])
-def test_a_workflow_subagent_is_blocked_where_nobody_can_answer(home, mode):
-    proc = raw(home, {"agent_id": "a1b2c3", "agent_type": "workflow-subagent"}, mode)
-    assert proc.returncode == 2 and "no human to confirm" in proc.stderr
-    assert row(home)["decision"] == "blocked" and row(home)["agent_type"] == "workflow-subagent"
-
-
 READ_LOOP = (
     "bash -c 'while read n; do c=$(curl -s -o /dev/null -w \"%{http_code}\" https://x.test/$n.com); "
     "if [ \"$c\" = 429 ]; then sleep 10; fi; echo \"$n $c\" >> r.txt; done < n.txt'"

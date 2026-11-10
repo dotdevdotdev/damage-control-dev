@@ -27,9 +27,6 @@ from damage_control.profile import load_profile
 #   - "bypassPermissions" -> --dangerously-skip-permissions
 #   - "auto"              -> autonomous /loop or similar auto mode
 # Hard blocks still fire either way; an ``ask`` becomes an allow — EXCEPT an unverifiable one.
-# The ``agent_type`` Claude Code gives a subagent a workflow script started. A workflow takes no
-# mid-run input, so nobody can answer an ask there: its calls are judged as unattended.
-WORKFLOW_AGENT_TYPE = "workflow-subagent"
 BYPASS_PERMISSION_MODES = frozenset({"bypassPermissions", "auto"})
 
 # stdout of an ask: Claude Code's PreToolUse permission-decision envelope.
@@ -111,7 +108,7 @@ def parse_payload(payload: Dict[str, Any], tools: Optional[Dict[str, Tuple[str, 
     tool_input = payload.get("tool_input", {})
     ctx = context(
         mode=bypass if payload.get("permission_mode", "") in BYPASS_PERMISSION_MODES else "default",
-        unattended=engine.is_unattended() or payload.get("agent_type") == WORKFLOW_AGENT_TYPE,
+        unattended=engine.is_unattended(),
     )
     if tools is None:
         return tool_call("mcp", tool_name, tool_input=tool_input or {}), ctx
