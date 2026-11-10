@@ -152,6 +152,17 @@ def _agent_id() -> str:
     return _hook_field("agent_id") or (os.environ.get(_AGENT_ENV) if _AGENT_ENV else None) or "main"
 
 
+def agent_label() -> str:
+    """``"[Explore a1b2c3] "`` for a call made inside a subagent, ``""`` for the main agent.
+
+    Prefixed to an ask so the person answering sees which agent is asking.
+    """
+    agent_id, agent_type = _hook_field("agent_id"), _hook_field("agent_type")
+    if not agent_id and not agent_type:
+        return ""
+    return "[" + " ".join(x for x in (agent_type, agent_id) if x) + "] "
+
+
 def _tmux_session_name() -> Optional[str]:
     """The tmux session this hook process runs inside, or None.
 

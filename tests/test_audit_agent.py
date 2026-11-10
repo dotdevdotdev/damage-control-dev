@@ -48,3 +48,45 @@ def test_env_is_the_fallback_when_payload_has_no_agent_id(pack_home):
 def test_main_when_neither_names_an_agent(home):
     r = audit(home)
     assert (r["agent_id"], r["agent_type"]) == ("main", None)
+
+
+UNVERIFIABLE = "$(echo rm) -rf /"
+
+
+def raw(home, extra, mode="default"):
+    import subprocess
+    import sys
+    payload = {"session_id": "0" * 8, "cwd": str(home), "hook_event_name": "PreToolUse", "permission_mode": mode,
+               "tool_name": "Bash", "tool_input": {"command": UNVERIFIABLE}, **extra}
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(home), "PWD": str(home)}
+    return subprocess.run([sys.executable, "-I", "-m", "damage_control.hook", "bash"], input=json.dumps(payload),
+                          capture_output=True, text=True, env=env, cwd=str(home), timeout=120)
+
+
+def test_an_ask_names_the_subagent_asking(home):
+    proc = raw(home, {"agent_id": "a1b2c3", "agent_type": "Explore"})
+    reason = json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert proc.returncode == 0 and reason.startswith("[Explore a1b2c3] ")
+
+
+def test_an_ask_from_the_main_agent_has_no_label(home):
+    reason = json.loads(raw(home, {}).stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert not reason.startswith("[")
+
+
+@pytest.mark.parametrize("mode", ["default", "bypassPermissions"])
+def test_a_workflow_subagent_is_blocked_where_nobody_can_answer(home, mode):
+    proc = raw(home, {"agent_id": "a1b2c3", "agent_type": "workflow-subagent"}, mode)
+    assert proc.returncode == 2 and "no human to confirm" in proc.stderr
+    assert row(home)["decision"] == "blocked" and row(home)["agent_type"] == "workflow-subagent"
+
+
+READ_LOOP = (
+    "bash -c 'while read n; do c=$(curl -s -o /dev/null -w \"%{http_code}\" https://x.test/$n.com); "
+    "if [ \"$c\" = 429 ]; then sleep 10; fi; echo \"$n $c\" >> r.txt; done < n.txt'"
+)
+
+
+def test_a_read_loop_with_a_substitution_result_is_not_unverifiable(home):
+    """`c=$(…)` was resolved to its first word and spliced into the `bash -c` payload, which then asked."""
+    assert run_hook("bash", "Bash", {"command": READ_LOOP}, str(home), home, mode="bypassPermissions") == "allow"

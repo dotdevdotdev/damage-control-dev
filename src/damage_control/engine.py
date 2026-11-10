@@ -4674,7 +4674,12 @@ def _segment_raw_words(command: str) -> List[List[str]]:
 @functools.lru_cache(maxsize=256)
 def _segment_raw_words_of(command: str) -> Tuple[Tuple[str, ...], ...]:
     command = _strip_heredoc_bodies(command)
-    assigns = shellexpand.resolve_assignment_chain({m.group(1): m.group(2).strip("'\"") for m in _ASSIGN_RE.finditer(command)})
+    # A value holding a substitution is computed at run time and the pattern only captured its first
+    # word (``c=$(echo``): resolving ``$c`` to that fragment would rewrite later text into garbage.
+    assigns = shellexpand.resolve_assignment_chain({
+        m.group(1): m.group(2).strip("'\"") for m in _ASSIGN_RE.finditer(command)
+        if m.group(2)[:1] == "'" or not ("$(" in m.group(2) or "`" in m.group(2))
+    })
     out: List[Tuple[str, ...]] = []
     for toks in _scan_masked_tokens(command):
         words: List[str] = []
