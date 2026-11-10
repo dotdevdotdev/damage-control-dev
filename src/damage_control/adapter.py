@@ -109,6 +109,7 @@ def parse_payload(payload: Dict[str, Any], tools: Optional[Dict[str, Tuple[str, 
     ctx = context(
         mode=bypass if payload.get("permission_mode", "") in BYPASS_PERMISSION_MODES else "default",
         unattended=engine.is_unattended(),
+        subagent=bool(payload.get("agent_id")),
     )
     if tools is None:
         return tool_call("mcp", tool_name, tool_input=tool_input or {}), ctx
@@ -170,7 +171,7 @@ def render(verdict: Any, engine: Any) -> None:
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": _HOOK_EVENT,
             "permissionDecision": "ask",
-            "permissionDecisionReason": audit.agent_label() + verdict.reason,
+            "permissionDecisionReason": verdict.reason,
         }}))
     sys.exit(0)
 

@@ -63,15 +63,24 @@ def raw(home, extra, mode="default"):
                           capture_output=True, text=True, env=env, cwd=str(home), timeout=120)
 
 
-def test_an_ask_names_the_subagent_asking(home):
-    proc = raw(home, {"agent_id": "a1b2c3", "agent_type": "Explore"})
-    reason = json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
-    assert proc.returncode == 0 and reason.startswith("[Explore a1b2c3] ")
+def test_the_main_agent_still_gets_the_ask(home):
+    proc = raw(home, {})
+    assert proc.returncode == 0 and json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
-def test_an_ask_from_the_main_agent_has_no_label(home):
-    reason = json.loads(raw(home, {}).stdout)["hookSpecificOutput"]["permissionDecisionReason"]
-    assert not reason.startswith("[")
+@pytest.mark.parametrize("mode", ["default", "bypassPermissions"])
+def test_a_subagent_cannot_ask_so_it_is_told_to_hand_the_command_back(home, mode):
+    proc = raw(home, {"agent_id": "a1b2c3", "agent_type": "general-purpose"}, mode)
+    assert proc.returncode == 2 and proc.stdout.strip() == ""
+    assert "subagent cannot ask" in proc.stderr and UNVERIFIABLE in proc.stderr and "NEEDS APPROVAL:" in proc.stderr
+    r = row(home)
+    assert (r["decision"], r["agent_id"], r["agent_type"]) == ("blocked", "a1b2c3", "general-purpose")
+    assert r["blocked_by"].startswith("subagent cannot ask:")
+
+
+def test_a_subagent_call_that_needs_no_ask_is_unchanged(home):
+    assert run_hook("bash", "Bash", {"command": "echo hi"}, str(home), home,
+                    payload_extra={"agent_id": "a1b2c3", "agent_type": "general-purpose"}) == "allow"
 
 
 READ_LOOP = (
