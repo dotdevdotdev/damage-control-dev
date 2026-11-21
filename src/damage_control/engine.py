@@ -7571,7 +7571,6 @@ def _eval_run_shell(base: str, rest: List[str], aliases: frozenset, rescan, resc
 
 
 _EVAL_SED_E_COMMAND_RE = _rx(r"(?:^|[;{}\n]|[0-9$/IM]|\\([^\w\s\\])(?:(?!\1).)*\1)\s*!?\s*e(?:\s|$)", 0)
-_EVAL_SED_S_FLAG_E_RE = _rx(r"(?:^|[;{}\n])[ \t]*(?:[0-9$,~]+|/(?:\\.|[^/\\\n])*/)?[ \t]*!?[ \t]*s([^\w\s\\]|_)(?:\\.|(?!\1).)*\1(?:\\.|(?!\1).)*\1[a-zA-Z0-9]*e", 0)
 
 
 def _eval_sed_executes(arg: str) -> bool:
@@ -7582,7 +7581,7 @@ def _eval_sed_executes(arg: str) -> bool:
     """
     if not re.search(r"(?<![\w-])eval(?![\w-])", arg):
         return False
-    return bool(_EVAL_SED_E_COMMAND_RE.search(arg) or _EVAL_SED_S_FLAG_E_RE.search(arg))
+    return bool(_EVAL_SED_E_COMMAND_RE.search(arg) or _SED_S_FLAG_E_RE.search(arg))
 
 
 def _eval_git_payload(rest: List[str], rescan) -> bool:
