@@ -69,7 +69,8 @@ def test_enabling_the_pack_goes_through_the_human_only_mechanism(tmp_path):
     assert not (tmp_path / ".damage-control" / "damagecontrol.yml").exists()
 
 
-def test_the_pack_off_loads_none_of_its_rules():
+def test_the_pack_off_loads_none_of_its_rules(off_home, monkeypatch):
+    monkeypatch.setenv("HOME", str(off_home))
     config = engine.load_effective_config()
     ids = {r.get("id") for r in config["bashToolPatterns"]} | {p.get("id") for p in config["mcpToolPolicies"]}
     assert not {i for i in ids if i and ("agentwire" in i)}
